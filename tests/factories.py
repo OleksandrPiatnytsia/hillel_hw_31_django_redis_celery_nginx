@@ -1,7 +1,7 @@
 """factory-boy factories: test objects in one line, with sensible defaults.
 
     BookFactory()                       a book with a new author, 10 in stock
-    BookFactory(stock=0, price="99.90") override any field
+    BookFactory(stock=0, price="99.90") override any field (stock: a Stock row)
     BookFactory(categories=[fiction])   ManyToMany through BookCategory
     UserFactory(groups=["Managers"])    groups by name (made by migrations)
     OrderFactory(user=ann, items=[(book, 2)])   an order with its lines and total
@@ -19,6 +19,7 @@ from django.contrib.auth.models import Group
 from factory.django import DjangoModelFactory, Password
 
 from books.models import Author, Book, Category
+from inventory.services import set_stock
 from orders.models import Order, OrderItem
 from payments.models import Payment
 from users.models import User
@@ -79,7 +80,21 @@ class BookFactory(DjangoModelFactory):
     author = factory.SubFactory(AuthorFactory)
     price = Decimal("250.00")
     description = "A good book."
-    stock = 10
+
+    @factory.post_generation
+    def stock(self, create, extracted, **kwargs):
+        """BookFactory(stock=3): copies in the default warehouse (default 10).
+
+        Not a model field any more (inventory.Stock), so not a plain
+        attribute: Book(stock=3) would only set the value of the object.
+        create(): a real Stock row; build(): only the value of the object,
+        no database (book.is_low_stock still works).
+        """
+        quantity = 10 if extracted is None else extracted
+        if create:
+            set_stock(self, quantity)
+        else:
+            self.stock = quantity
 
     @factory.post_generation
     def categories(self, create, extracted, **kwargs):

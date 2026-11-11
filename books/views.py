@@ -60,6 +60,9 @@ class BookListView(ElidedPaginationMixin, ListView):
             .select_related("author")
             # ManyToMany: categories of all books on the page in one extra query
             .prefetch_related("categories")
+            # Copies in the default warehouse, in the same SQL query
+            # (a subquery): the badge and the "Add to cart" button need it
+            .with_stock()
         )
 
         # Unbound form (None) when there are no GET params -> no validation errors
@@ -107,6 +110,7 @@ class BookDetailView(DetailView):
             .get_queryset()
             .select_related("author")
             .prefetch_related("categories")
+            .with_stock()
         )
 
     def get_context_data(self, **kwargs):
@@ -274,7 +278,7 @@ class AuthorDetailView(DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         # Reverse side of ForeignKey: related_name="books" -> author.books
-        context["books"] = self.object.books.prefetch_related("categories")
+        context["books"] = self.object.books.prefetch_related("categories").with_stock()
         return context
 
 
@@ -302,6 +306,9 @@ async def book_search(request):
 
     books = (
         Book.objects.select_related("author")  # author.name in the same query
+        # The stock in the same query: book.stock without it would be a
+        # sync query inside an async view (SynchronousOnlyOperation)
+        .with_stock()
         .filter(Q(title__icontains=query) | Q(author__name__icontains=query))
         .order_by("title", "pk")[:SEARCH_LIMIT]
     )

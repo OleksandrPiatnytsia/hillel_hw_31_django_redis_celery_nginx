@@ -91,7 +91,7 @@ def test_book_filter_form_price_from_greater_than_price_to_is_invalid():
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(("groups", "stock_disabled"), [(["Editors"], True), (["Managers"], False)])
-def test_book_form_stock_is_editable_only_with_manage_stock(groups, stock_disabled):
+def test_book_form_stock_is_editable_only_with_change_stock(groups, stock_disabled):
     user = UserFactory(groups=groups)
 
     form = BookForm(user=user)

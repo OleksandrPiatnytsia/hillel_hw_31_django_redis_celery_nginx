@@ -84,7 +84,7 @@ book_schema = catalog_schema(
     "books",
     "Needs the permissions of the user's group: add_book (Editors, Managers), "
     "change_book (Editors, Managers), delete_book (Managers). Changing "
-    "\"stock\" needs books.manage_stock (Managers), otherwise 403.",
+    "\"stock\" needs inventory.change_stock (Managers), otherwise 403.",
     protected="The book is in orders.",
 )
 author_schema = catalog_schema(

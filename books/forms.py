@@ -4,6 +4,8 @@ from django.core.validators import FileExtensionValidator
 from django.utils.text import format_lazy
 from django.utils.translation import gettext_lazy as _
 
+from inventory.services import set_stock
+
 from .models import Author, Book, BookQuerySet, Category
 
 COVER_MAX_SIZE_MB = 2
@@ -21,7 +23,30 @@ class CoverInput(forms.ClearableFileInput):
 
 
 class BookForm(forms.ModelForm):
-    """Create / update a book, styled with Bootstrap classes."""
+    """Create / update a book, styled with Bootstrap classes.
+
+    "stock" is not a field of Book any more (inventory.Stock), so it is
+    declared here by hand and saved in save() to the default warehouse.
+    For the user the form is the same as before.
+    """
+
+    # max_value: the largest value of PositiveIntegerField in PostgreSQL,
+    # a bigger number would be a database error instead of a form error
+    stock = forms.IntegerField(
+        label=_("stock"),
+        min_value=0,
+        max_value=2147483647,
+        initial=0,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+        # A hidden copy of the value the page was opened with:
+        #   <input type="hidden" name="initial-stock" value="5">
+        # changed_data then compares the sent value with THAT one, not with
+        # the stock at the moment of saving. 5 when opened, 1 sold
+        # meanwhile (now 4), the manager edits only the title and sends 5:
+        # 5 == 5 -> "not changed" -> the 4 stays. Without it 5 != 4 would
+        # count as a change and the sold copy would come back.
+        show_hidden_initial=True,
+    )
 
     class Meta:
         model = Book
@@ -29,6 +54,8 @@ class BookForm(forms.ModelForm):
             "title",
             "author",
             "price",
+            # Not a model field: the declared field above; listed to keep
+            # its place in the form
             "stock",
             "categories",
             "description",
@@ -57,7 +84,6 @@ class BookForm(forms.ModelForm):
             "price": forms.NumberInput(
                 attrs={"class": "form-control", "min": "0", "step": "0.01"}
             ),
-            "stock": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
             # Through model (BookCategory) has no extra required fields,
             # so ModelForm.save() can write the M2M as usual
             "categories": forms.CheckboxSelectMultiple(
@@ -72,14 +98,37 @@ class BookForm(forms.ModelForm):
         # Django's default empty choice "- Select an option -" (new in
         # Django 6.1) has no Ukrainian translation in Django yet
         self.fields["author"].empty_label = _("— Choose an author —")
-        if user is not None and not user.has_perm("books.manage_stock"):
+        if self.instance.pk:
+            # Editing: the current stock (a ModelForm fills only model fields)
+            self.initial.setdefault("stock", self.instance.stock)
+        if user is not None and not user.has_perm("inventory.change_stock"):
             stock = self.fields["stock"]
             # disabled: the browser shows the field greyed out AND Django
             # ignores whatever is POSTed for it, using the initial value
-            # (current stock, or the model default 0 for a new book) — so
+            # (current stock, or 0 for a new book) — so
             # editing the HTML in DevTools doesn't help
             stock.disabled = True
             stock.help_text = _("Only users with the “manage stock” permission can change it.")
+
+    def save(self, commit=True):
+        book = super().save(commit=commit)
+        if commit:
+            self.save_stock()
+        return book
+
+    def save_stock(self):
+        """Write the stock to the default warehouse, only if the user changed it.
+
+        Disabled field (no permission) or not changed by the user: nothing
+        is written. Writing the old value back could undo an order made
+        while the form was open (see show_hidden_initial above).
+        A new book with 0: nothing to write either, inventory.signals has
+        already made its row with 0.
+        With commit=False the caller saves the book and then calls this.
+        """
+        if self.fields["stock"].disabled or "stock" not in self.changed_data:
+            return
+        set_stock(self.instance, self.cleaned_data["stock"])
 
     def clean_cover(self):
         """Extra checks on top of ImageField (which already verifies via Pillow

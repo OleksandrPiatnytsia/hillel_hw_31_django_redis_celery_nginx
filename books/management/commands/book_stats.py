@@ -29,31 +29,37 @@ class Command(BaseCommand):
         search = options["search"]
         category_slug = options["category"]
 
+        # The stock is not a column of the book any more (inventory.Stock):
+        # with_stock() adds it as the annotation "stock" (the default
+        # warehouse), and every query below uses it like a field:
+        # filter(stock__gt=0), order_by("stock"), F("stock"), Sum("stock")
+        books = Book.objects.with_stock()
+
         # ------------------------------------------------------------------
         # 1. filter
         # ------------------------------------------------------------------
 
         # field lookups: __gt (>), __lte (<=); several kwargs are joined with AND
-        cheap_in_stock = Book.objects.filter(
+        cheap_in_stock = books.filter(
             stock__gt=0, price__lte=max_price
         ).order_by("price")
         self.section(f"filter: in stock and price <= {max_price}", cheap_in_stock)
 
         # __range is BETWEEN; exclude() is the opposite of filter()
-        low_stock = Book.objects.filter(
+        low_stock = books.filter(
             stock__range=(1, LOW_STOCK_THRESHOLD)
         ).order_by("stock")
         self.section(f"filter: low stock (1..{LOW_STOCK_THRESHOLD})", low_stock)
 
-        out_of_stock = Book.objects.filter(stock=0)
+        out_of_stock = books.filter(stock=0)
         self.section("filter: out of stock", out_of_stock)
 
         # double underscore follows relations: Book -> categories -> slug (JOIN)
-        in_category = Book.objects.filter(categories__slug=category_slug)
+        in_category = books.filter(categories__slug=category_slug)
         self.section(f"filter across M2M: category '{category_slug}'", in_category)
 
         # isnull=True on M2M: books that have no category at all
-        without_category = Book.objects.filter(categories__isnull=True)
+        without_category = books.filter(categories__isnull=True)
         self.section("filter: books without category", without_category)
 
         # ------------------------------------------------------------------
@@ -67,11 +73,11 @@ class Command(BaseCommand):
             | Q(author__name__icontains=search)
             | Q(categories__name__icontains=search)
         )
-        found = Book.objects.filter(search_q).distinct()
+        found = books.filter(search_q).distinct()
         self.section(f"Q (OR): title/author/category contains '{search}'", found)
 
         # NOT: in stock, but not in the given category
-        not_in_category = Book.objects.filter(
+        not_in_category = books.filter(
             Q(stock__gt=0) & ~Q(categories__slug=category_slug)
         )
         self.section(
@@ -79,7 +85,7 @@ class Command(BaseCommand):
         )
 
         # mixed: (cheap OR plenty in stock) AND has description
-        promo = Book.objects.filter(
+        promo = books.filter(
             (Q(price__lt=150) | Q(stock__gte=20)) & ~Q(description="")
         ).order_by("price")
         self.section(
@@ -91,12 +97,19 @@ class Command(BaseCommand):
         # ------------------------------------------------------------------
 
         # aggregate per category -> GROUP BY category
+        # Category -> books -> stocks: two JOINs, one row per book per
+        # warehouse. filter=default_stock takes only the rows of the default
+        # warehouse, so a book in several warehouses is not counted several
+        # times; books_count uses distinct=True for the same reason.
+        default_stock = Q(books__stocks__warehouse__is_default=True)
         categories = Category.objects.annotate(
-            books_count=Count("books"),
+            books_count=Count("books", distinct=True),
             # Count with filter=Q(...) counts only matching rows
-            in_stock_count=Count("books", filter=Q(books__stock__gt=0)),
-            avg_price=Avg("books__price"),
-            total_stock=Sum("books__stock"),
+            in_stock_count=Count(
+                "books", filter=default_stock & Q(books__stocks__quantity__gt=0)
+            ),
+            avg_price=Avg("books__price", filter=default_stock),
+            total_stock=Sum("books__stocks__quantity", filter=default_stock),
         ).order_by("-books_count", "name")
         self.heading("annotate: statistics per category")
         self.print_sql(categories)
@@ -112,7 +125,7 @@ class Command(BaseCommand):
             )
 
         # F() refers to another field of the same row: price * stock
-        top_value = Book.objects.annotate(
+        top_value = books.annotate(
             inventory_value=F("price") * F("stock"),
             categories_count=Count("categories"),
         ).order_by("-inventory_value")[:5]
@@ -138,7 +151,7 @@ class Command(BaseCommand):
         # ------------------------------------------------------------------
         # 4. aggregate: one summary row for the whole table
         # ------------------------------------------------------------------
-        totals = Book.objects.aggregate(
+        totals = books.aggregate(
             books=Count("id"),
             in_stock=Count("id", filter=Q(stock__gt=0)),
             avg_price=Avg("price"),

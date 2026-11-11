@@ -2,7 +2,7 @@
 create, edit and delete books through the site forms (not the admin), with
 the permissions of their groups (users/migrations/0003_create_groups.py):
 
-- Managers: add, change, delete books, change the stock (manage_stock);
+- Managers: add, change, delete books, change the stock (inventory.change_stock);
 - Editors:  add and change books, but no deleting and no stock.
 """
 

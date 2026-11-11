@@ -68,7 +68,7 @@
         <ul class="list-unstyled mb-3">
           <li>{% if perms.books.add_book %}✅{% else %}❌{% endif %} {% translate "add books" %}</li>
           <li>{% if perms.books.change_book %}✅{% else %}❌{% endif %} {% translate "edit books" %}</li>
-          <li>{% if perms.books.manage_stock %}✅{% else %}❌{% endif %} {% translate "change stock" %}</li>
+          <li>{% if perms.inventory.change_stock %}✅{% else %}❌{% endif %} {% translate "change stock" %}</li>
           <li>{% if perms.books.delete_book %}✅{% else %}❌{% endif %} {% translate "delete books" %}</li>
         </ul>
 

@@ -8,11 +8,12 @@ command, and the rules (locks, stock) must be the same everywhere.
 from functools import partial
 
 from django.db import transaction
-from django.db.models import F
 from django.utils.translation import gettext as _
 from django.utils.translation import ngettext
 
 from books.models import Book
+from inventory.models import Stock, Warehouse
+from inventory.services import return_to_stock
 
 from .emails import send_order_created_email
 from .models import Order, OrderItem
@@ -41,11 +42,13 @@ def create_order(user, quantities, *, full_name, phone, address, idempotency_key
     the middle rolls back the whole transaction — no order without items,
     no stock taken for an order that doesn't exist).
 
+    The copies are taken from the default warehouse (inventory.Stock).
+
     Flow:
-    1. Lock the rows of the ordered books (SELECT ... FOR UPDATE).
+    1. Lock the stock rows of the ordered books (SELECT ... FOR UPDATE).
     2. Check that every book exists and has enough stock.
     3. Create the Order and its OrderItems with the current prices.
-    4. Reserve: stock -= quantity for every book.
+    4. Reserve: quantity -= ordered for every stock row.
     5. COMMIT: the locks are released.
 
     Raises OrderError if the cart is empty or something is missing; the
@@ -55,6 +58,8 @@ def create_order(user, quantities, *, full_name, phone, address, idempotency_key
         raise OrderError(_("The cart is empty."))
 
     with transaction.atomic():
+        warehouse = Warehouse.objects.get_default()
+
         # select_for_update(): other transactions that want to lock or
         # change these rows WAIT until this one ends. Without the lock two
         # users could both read stock = 1 and both buy the last copy:
@@ -62,26 +67,32 @@ def create_order(user, quantities, *, full_name, phone, address, idempotency_key
         #   A: stock = 0                  B: stock = 0  (2 copies sold, 1 existed)
         # With the lock B waits on its SELECT, then reads stock 0 -> error.
         #
-        # order_by("pk"): every checkout locks the books in the same order.
-        # Otherwise A could lock book 1 and wait for book 2, while B locked
-        # book 2 and waits for book 1 -> deadlock (PostgreSQL would cancel one).
+        # The locked rows are the Stock rows (book + warehouse), not the
+        # books: the stock lives there. Editing a book's title or price at
+        # the same moment doesn't wait for a checkout.
         #
-        # No select_related() here: it would also lock the joined rows
-        # (authors) — not needed for a stock check.
-        books = {
-            book.pk: book
-            for book in Book.objects.select_for_update()
-            .filter(pk__in=quantities)
-            .order_by("pk")
+        # order_by("book_id"): every checkout locks the rows in the same
+        # order. Otherwise A could lock book 1 and wait for book 2, while B
+        # locked book 2 and waits for book 1 -> deadlock (PostgreSQL would
+        # cancel one).
+        stocks = {
+            stock.book_id: stock
+            for stock in Stock.objects.select_for_update()
+            .filter(warehouse=warehouse, book_id__in=quantities)
+            .order_by("book_id")
         }
+        # Title and price, without a lock: OrderItem copies them
+        books = Book.objects.in_bulk(list(quantities))
 
         problems = []
         for book_id, quantity in quantities.items():
             book = books.get(book_id)
+            # No row in the default warehouse = nothing to sell
+            available = stocks[book_id].quantity if book_id in stocks else 0
             if book is None:
                 problems.append(_("A book from your cart is no longer sold."))
-            elif book.stock < quantity:
-                if book.stock == 0:
+            elif available < quantity:
+                if available == 0:
                     problems.append(_("“%(title)s” is out of stock.") % {"title": book.title})
                 else:
                     # ngettext: the form depends on the number. Ukrainian
@@ -91,9 +102,9 @@ def create_order(user, quantities, *, full_name, phone, address, idempotency_key
                         ngettext(
                             "“%(title)s”: only %(stock)s copy left, you ordered %(quantity)s.",
                             "“%(title)s”: only %(stock)s copies left, you ordered %(quantity)s.",
-                            book.stock,
+                            available,
                         )
-                        % {"title": book.title, "stock": book.stock, "quantity": quantity}
+                        % {"title": book.title, "stock": available, "quantity": quantity}
                     )
         if problems:
             # Leaving the "with" block with an exception = ROLLBACK
@@ -126,11 +137,11 @@ def create_order(user, quantities, *, full_name, phone, address, idempotency_key
             # Reserve: the copies are taken from the stock now, not after
             # payment, so nobody else can buy them while this user pays.
             # Returned only if the order is cancelled (cancel_order()).
-            book.stock -= quantity
+            stocks[book_id].quantity -= quantity
 
-        # One INSERT for all items, one UPDATE for all books
+        # One INSERT for all items, one UPDATE for all stock rows
         OrderItem.objects.bulk_create(items)
-        Book.objects.bulk_update(books.values(), ["stock"])
+        Stock.objects.bulk_update(stocks.values(), ["quantity"])
 
         order.total = total
         order.save(update_fields=["total", "updated_at"])
@@ -178,14 +189,14 @@ def cancel_order(order_id, *, user=None, only_unpaid=False):
         ):
             raise OrderError(_("%(order)s is not a new unpaid order any more.") % {"order": order})
 
-        # Return the reserved copies. F("stock") + n: the addition happens
-        # in SQL (UPDATE ... SET stock = stock + n), on the current value.
-        # The books are locked by the UPDATE itself; going in book_id order
+        # Return the reserved copies to the default warehouse, where
+        # create_order() took them. return_to_stock() adds in SQL
+        # (UPDATE ... SET quantity = quantity + n), on the current value.
+        # The rows are locked by the UPDATE itself; going in book_id order
         # keeps the lock order the same as in create_order().
+        warehouse = Warehouse.objects.get_default()
         for item in order.items.order_by("book_id"):
-            Book.objects.filter(pk=item.book_id).update(
-                stock=F("stock") + item.quantity
-            )
+            return_to_stock(item.book_id, item.quantity, warehouse)
 
         order.status = Order.Status.CANCELLED
         order.save(update_fields=["status", "updated_at"])

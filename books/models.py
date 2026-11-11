@@ -2,6 +2,8 @@ from decimal import Decimal
 
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.db.models import OuterRef, Subquery
+from django.db.models.functions import Coalesce
 from django.templatetags.static import static
 from django.urls import reverse
 from django.utils.text import format_lazy
@@ -23,15 +25,42 @@ class BookQuerySet(models.QuerySet):
         (STOCK_OUT, _("Out of stock")),
     ]
 
+    def with_stock(self):
+        """Add the annotation "stock": copies in the default warehouse, 0 without a row.
+
+        One subquery inside the same SELECT, for every book of the list:
+
+            SELECT book.*, COALESCE((SELECT quantity FROM inventory_stock
+                                     JOIN inventory_warehouse ...
+                                     WHERE book_id = book.id AND is_default
+                                     LIMIT 1), 0) AS stock
+            FROM books_book
+
+        After it book.stock is a plain value (no query per book), and
+        "stock" works in filter() / order_by(): filter(stock__gt=0).
+        Calling it twice is safe: the second call changes nothing.
+        """
+        if "stock" in self.query.annotations:
+            return self
+        # Imported here: inventory.models has a ForeignKey to Book, and
+        # books.models is loaded first
+        from inventory.models import Stock
+
+        default_quantity = Stock.objects.filter(
+            book=OuterRef("pk"), warehouse__is_default=True
+        ).values("quantity")[:1]
+        return self.annotate(stock=Coalesce(Subquery(default_quantity), 0))
+
     def by_stock_status(self, status):
         """Filter by one of STOCK_STATUS_CHOICES; unknown/empty value -> no filter."""
+        if status not in (self.STOCK_IN, self.STOCK_LOW, self.STOCK_OUT):
+            return self
+        books = self.with_stock()
         if status == self.STOCK_IN:
-            return self.filter(stock__gt=0)
+            return books.filter(stock__gt=0)
         if status == self.STOCK_LOW:
-            return self.filter(stock__gt=0, stock__lte=LOW_STOCK_THRESHOLD)
-        if status == self.STOCK_OUT:
-            return self.filter(stock=0)
-        return self
+            return books.filter(stock__gt=0, stock__lte=LOW_STOCK_THRESHOLD)
+        return books.filter(stock=0)
 
 
 class Category(models.Model):
@@ -79,7 +108,8 @@ class Book(models.Model):
         validators=[MinValueValidator(Decimal("0.00"))],
     )
     description = models.TextField(_("description"), blank=True)
-    stock = models.PositiveIntegerField(_("stock"), default=0)
+    # No stock here: copies are counted in inventory.Stock (see the
+    # "stock" property below and BookQuerySet.with_stock())
     # Only the path is stored in the DB; the file goes to MEDIA_ROOT/covers/<year>/<month>/
     cover = models.ImageField(_("cover"), upload_to="covers/%Y/%m/", blank=True)
     categories = models.ManyToManyField(
@@ -98,16 +128,8 @@ class Book(models.Model):
         ordering = ["title"]
         verbose_name = _("book")
         verbose_name_plural = _("books")
-        # Custom permission on top of the 4 default ones (add / change /
-        # delete / view_book). Codename -> "books.manage_stock" in has_perm()
-        # and perms.books.manage_stock in templates. Editors may edit a book,
-        # but only users with this permission may change its stock.
-        # NOT translated: the name is copied into the auth_permission table
-        # once (at migrate), in the language active at that moment. Django's
-        # own names ("Can add book") stay English the same way.
-        permissions = [
-            ("manage_stock", "Can change stock quantity"),
-        ]
+        # The stock permission is inventory.change_stock now (it was
+        # books.manage_stock while the stock was a column of the book)
 
     def __str__(self):
         # author is a related object: use select_related("author") in lists,
@@ -123,6 +145,44 @@ class Book(models.Model):
         if self.cover:
             return self.cover.url
         return static("img/no-cover.svg")
+
+    # ------------------------------------------------------------------
+    # Stock: copies in the default warehouse (inventory.Stock)
+    # ------------------------------------------------------------------
+
+    @property
+    def stock(self):
+        """Copies in the default warehouse.
+
+        Books from Book.objects.with_stock() already have the value (the
+        annotation is stored through the setter below): no query. Any other
+        book object reads it with one query, then keeps it.
+        In lists always use with_stock(): otherwise one query per book.
+        """
+        if "_stock" not in self.__dict__:
+            if self.pk is None:
+                self._stock = 0
+            else:
+                quantity = (
+                    self.stocks.filter(warehouse__is_default=True)
+                    .values_list("quantity", flat=True)
+                    .first()
+                )
+                self._stock = quantity or 0
+        return self._stock
+
+    @stock.setter
+    def stock(self, value):
+        # Only the value of this object: used by with_stock() (Django sets
+        # annotations with setattr) and by inventory.services.set_stock().
+        # It does NOT save anything: the stock is changed through
+        # inventory.services, not book.stock = 5; book.save().
+        self._stock = value
+
+    def refresh_from_db(self, *args, **kwargs):
+        # The stock may have changed too: read it again on the next access
+        self.__dict__.pop("_stock", None)
+        super().refresh_from_db(*args, **kwargs)
 
     @property
     def is_low_stock(self):

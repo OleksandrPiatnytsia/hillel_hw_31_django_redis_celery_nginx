@@ -18,6 +18,7 @@ from django.db import connection
 from django.urls import reverse
 from pytest_django.asserts import assertRedirects
 
+from inventory.services import set_stock
 from orders.models import Order
 from orders.services import OrderError, create_order
 from payments.models import Payment
@@ -81,8 +82,7 @@ def test_not_enough_stock_keeps_cart_and_saves_nothing(customer_client, mailoutb
     book = BookFactory(stock=3)
     add_to_cart(customer_client, book, 3)
     # Somebody else bought two copies while the customer was filling the form
-    book.stock = 1
-    book.save()
+    set_stock(book, 1)
 
     response = customer_client.post(reverse("orders:checkout"), DELIVERY)
 

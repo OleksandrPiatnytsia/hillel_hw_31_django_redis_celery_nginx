@@ -15,7 +15,7 @@ Who may do what:
                 groups (DjangoModelPermissionsOrAnonReadOnly): add_book for
                 POST, change_book for PUT/PATCH, delete_book for DELETE.
                 "Editors" add and change, "Managers" also delete. The stock
-                only with manage_stock (BookSerializer.validate_stock).
+                only with inventory.change_stock (BookSerializer.validate_stock).
     authors,    read: everybody; write: IsAdminUser (is_staff) AND the
     categories  model permission (like the admin): "Managers" may delete a
                 category, a staff member without the permission may not
@@ -100,6 +100,9 @@ class BookViewSet(LoggedModelViewSet):
         .select_related("author")
         # ManyToMany: the categories of the whole page in one extra query
         .prefetch_related("categories")
+        # "stock" of the default warehouse in the same SQL query; also
+        # needed by the ?stock= filter
+        .with_stock()
         .order_by("title", "pk")
     )
     serializer_class = BookSerializer

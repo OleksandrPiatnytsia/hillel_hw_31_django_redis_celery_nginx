@@ -232,3 +232,41 @@ def test_book_stats_on_an_empty_catalog():
     call_command("book_stats", stdout=out)
 
     assert "(nothing found)" in out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Books and stock in the admin (stock in inventory.Stock since hw_31)
+# ---------------------------------------------------------------------------
+
+
+# Generated with AI
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # o=5: the 5th column of list_display ("stock"), ascending
+        ("?o=5", ["Out", "Few", "Plenty"]),
+        ("?o=-5", ["Plenty", "Few", "Out"]),
+        ("?stock_status=low", ["Few"]),
+        ("?stock_status=out", ["Out"]),
+    ],
+)
+def test_admin_book_list_sorts_and_filters_by_stock(manager_client, query, expected):
+    BookFactory(title="Plenty", stock=50)
+    BookFactory(title="Few", stock=2)
+    BookFactory(title="Out", stock=0)
+
+    response = manager_client.get(reverse("admin:books_book_changelist") + query)
+
+    assert response.status_code == 200
+    assert [book.title for book in response.context["cl"].result_list] == expected
+
+
+# Generated with AI
+def test_admin_book_page_shows_the_stock_inline_and_stock_list(manager_client, book):
+    page = manager_client.get(reverse("admin:books_book_change", args=[book.pk]))
+    stock_list = manager_client.get(reverse("admin:inventory_stock_changelist"))
+
+    assert page.status_code == 200
+    assert "stocks-TOTAL_FORMS" in page.content.decode()
+    assert stock_list.status_code == 200
+    assert [stock.quantity for stock in stock_list.context["cl"].result_list] == [10]

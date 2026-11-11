@@ -38,7 +38,8 @@ def cart_detail(request):
 @require_POST
 def cart_add(request, book_id):
     """Add copies of a book (override=False) or set the quantity (override=True)."""
-    book = get_object_or_404(Book, pk=book_id)
+    # with_stock(): Cart.add() and the messages below read book.stock
+    book = get_object_or_404(Book.objects.with_stock(), pk=book_id)
     form = CartAddForm(request.POST)
     if not form.is_valid():
         messages.error(request, _("Quantity must be a whole number, 1 or more."))

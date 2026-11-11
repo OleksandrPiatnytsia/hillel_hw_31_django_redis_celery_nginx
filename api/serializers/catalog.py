@@ -22,6 +22,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
 from books.models import Author, Book, Category
+from inventory.services import set_stock
 
 
 class BooksCountMixin(serializers.Serializer):
@@ -77,8 +78,12 @@ class BookSerializer(serializers.ModelSerializer):
     """/api/books/: read with nested author and categories, write with ids.
 
     Writing the stock is allowed only with the permission
-    books.manage_stock (group "Managers"), like in BookForm on the site:
-    an editor may create and edit books, the stock stays as it is.
+    inventory.change_stock (group "Managers"), like in BookForm on the
+    site: an editor may create and edit books, the stock stays as it is.
+
+    "stock" is not a field of Book (inventory.Stock, the default
+    warehouse): declared here, read from book.stock (the with_stock()
+    annotation of the ViewSet), written in create() / update().
     """
 
     # Reading: nested objects (read_only: they are never parsed from a request)
@@ -102,6 +107,8 @@ class BookSerializer(serializers.ModelSerializer):
     # Absolute URL of the uploaded cover, null without one. Read only:
     # covers are uploaded on the site (BookForm checks size and type)
     cover = serializers.SerializerMethodField()
+    # max_value: the largest PositiveIntegerField value in PostgreSQL
+    stock = serializers.IntegerField(min_value=0, max_value=2147483647, required=False)
     in_stock = serializers.SerializerMethodField()
 
     class Meta:
@@ -138,19 +145,40 @@ class BookSerializer(serializers.ModelSerializer):
         return book.stock > 0
 
     def validate_stock(self, value):
-        """Only users with books.manage_stock may CHANGE the stock.
+        """Only users with inventory.change_stock may CHANGE the stock.
 
         Sending the current value is allowed: a client that edits a book
         with PUT sends back every field it has read, the stock too.
-        New book: the current value is the model default (0).
+        New book: the current value is 0 (its new Stock row).
         """
         request = self.context.get("request")
-        if request is None or request.user.has_perm("books.manage_stock"):
+        if request is None or request.user.has_perm("inventory.change_stock"):
             return value
-        current = self.instance.stock if self.instance else Book._meta.get_field("stock").default
+        current = self.instance.stock if self.instance else 0
         if value != current:
             # 403, not 400: the value is fine, the user is not allowed
             raise PermissionDenied(
                 _("Only users with the “manage stock” permission can change it.")
             )
         return value
+
+    def create(self, validated_data):
+        # Book(**validated_data) would only put the number into the object:
+        # take it out and write it to the default warehouse after the book
+        stock = validated_data.pop("stock", None)
+        book = super().create(validated_data)
+        if stock:  # None or 0: the row made by inventory.signals already has 0
+            set_stock(book, stock)
+        return book
+
+    def update(self, instance, validated_data):
+        stock = validated_data.pop("stock", None)
+        book = super().update(instance, validated_data)
+        # Only a value different from the current one is written: PUT sends
+        # back every field it read, and an unchanged stock needs no UPDATE.
+        # Like any PUT without a version check (ETag / If-Match), a stock
+        # changed by an order between the client's GET and its PUT can
+        # still be overwritten by the old number.
+        if stock is not None and stock != book.stock:
+            set_stock(book, stock)
+        return book

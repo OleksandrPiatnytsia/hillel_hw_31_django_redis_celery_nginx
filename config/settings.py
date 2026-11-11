@@ -63,6 +63,8 @@ INSTALLED_APPS = [
     # Local apps
     "users",
     "books",
+    # Warehouses and the stock of books (was the column Book.stock)
+    "inventory",
     "cart",
     "orders",
     "payments",

@@ -3,6 +3,8 @@ from django.db.models import Count
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
+from inventory.models import Stock
+
 from .models import Author, Book, BookCategory, BookQuerySet, Category
 
 
@@ -36,6 +38,29 @@ class CategoryBookInline(BaseBookCategoryInline):
     autocomplete_fields = ["book"]
     verbose_name = _("book")
     verbose_name_plural = _("books")
+
+
+class StockInline(admin.TabularInline):
+    """Copies of the book per warehouse, on the Book page.
+
+    Editable only with inventory.change_stock (group "Managers"): Django
+    shows the rows read-only for users with only view_stock (Editors).
+    """
+
+    model = Stock
+    extra = 0
+    fields = ["warehouse", "quantity"]
+    verbose_name = _("stock")
+    verbose_name_plural = _("stock")
+
+    def has_add_permission(self, request, obj=None):
+        # A new book (obj is None): no rows here. Its row in the default
+        # warehouse is made by inventory.signals right after the book is
+        # saved; a row from this form for the same warehouse would then
+        # break the unique (book, warehouse) constraint.
+        if obj is None:
+            return False
+        return super().has_add_permission(request, obj)
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +130,9 @@ class BookAdmin(admin.ModelAdmin):
         "created_at",
     ]
     list_display_links = ["title"]
-    list_editable = ["price", "stock"]
+    # No "stock" here: it is a value of inventory.Stock, not a column of
+    # the book; quantities are edited in the Stock list or on the book page
+    list_editable = ["price"]
     list_filter = [StockStatusFilter, "categories", "created_at"]
     search_fields = ["title", "author__name", "description", "categories__name"]
     date_hierarchy = "created_at"
@@ -113,11 +140,11 @@ class BookAdmin(admin.ModelAdmin):
     # (needs search_fields in AuthorAdmin)
     autocomplete_fields = ["author"]
     readonly_fields = ["cover_preview", "created_at", "updated_at"]
-    inlines = [BookCategoryInline]
+    inlines = [StockInline, BookCategoryInline]
     fieldsets = [
         (None, {"fields": ["title", "author", "description"]}),
         (_("Cover"), {"fields": ["cover_preview", "cover"]}),
-        (_("Sales"), {"fields": ["price", "stock"]}),
+        (_("Sales"), {"fields": ["price"]}),
         (
             _("Timestamps"),
             {"fields": ["created_at", "updated_at"], "classes": ["collapse"]},
@@ -131,6 +158,8 @@ class BookAdmin(admin.ModelAdmin):
             .get_queryset(request)
             .select_related("author")
             .prefetch_related("categories")
+            # "stock" for the list column, its sorting and StockStatusFilter
+            .with_stock()
         )
 
     # format_html escapes the arguments and marks the result as safe HTML,
@@ -155,6 +184,10 @@ class BookAdmin(admin.ModelAdmin):
     @admin.display(description=_("categories"))
     def category_list(self, obj):
         return ", ".join(category.name for category in obj.categories.all())
+
+    @admin.display(description=_("stock"), ordering="stock")
+    def stock(self, obj):
+        return obj.stock
 
     @admin.display(description=_("available"), boolean=True, ordering="stock")
     def is_available(self, obj):

@@ -4,6 +4,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from books.models import Author, Book, Category
+from inventory.services import set_stock
 
 # slug -> name
 CATEGORIES = {
@@ -64,10 +65,14 @@ class Command(BaseCommand):
                 author=author,
                 defaults={
                     "price": Decimal(price),
-                    "stock": stock,
                     "description": description,
                 },
             )
+            if created:
+                # Only for a new book: re-running doesn't reset the stock
+                # that orders have changed since. The row with 0 is already
+                # there (inventory.signals); this sets the real number.
+                set_stock(book, stock)
             # add() skips links that already exist, so re-running is safe
             book.categories.add(*(categories[slug] for slug in slugs))
             if created:
