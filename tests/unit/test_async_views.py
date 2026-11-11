@@ -2,8 +2,7 @@
 
 AsyncClient sends the request through Django's ASGI handler, like
 gunicorn + uvicorn in Docker: async views are awaited in the event loop,
-the middleware chain runs in async mode (RequestTimingMiddleware.__acall__,
-AsyncWhiteNoiseMiddleware.__acall__).
+the middleware chain runs in async mode (RequestTimingMiddleware.__acall__).
 
 Why transaction=True: the async ORM runs the queries in a worker thread
 (sync_to_async), and a thread has its own database connection. A normal
@@ -20,7 +19,6 @@ SynchronousOnlyOperation inside the event loop).
 """
 
 import asyncio
-import warnings
 from decimal import Decimal
 
 import pytest
@@ -217,27 +215,3 @@ async def test_order_status_without_payments_is_zero_paid():
     assert response.json()["paid_amount"] == "0,00"  # default language: uk
     assert response.json()["amount_due"] == "300,00"
 
-
-# ---------------------------------------------------------------------------
-# Static files under ASGI (AsyncWhiteNoiseMiddleware)
-# ---------------------------------------------------------------------------
-
-
-async def test_static_file_is_served_in_async_mode_without_warnings(settings):
-    # The test settings have no STATIC_ROOT; let WhiteNoise find the file
-    # in static/ (STATICFILES_DIRS) like with DEBUG=True. A new AsyncClient
-    # builds the middleware chain with these settings.
-    settings.WHITENOISE_AUTOREFRESH = True
-    settings.WHITENOISE_USE_FINDERS = True
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        response = await AsyncClient().get("/static/js/book_search.js")
-        body = b"".join([chunk async for chunk in response])
-
-    assert response.status_code == 200
-    assert response["Content-Type"].startswith("text/javascript")
-    assert b"data-book-search" in body
-    # The sync file iterator was replaced with an async one: Django didn't
-    # have to read the whole file into memory with a warning
-    assert not [w for w in caught if "StreamingHttpResponse" in str(w.message)]

@@ -1,4 +1,4 @@
-"""Project middleware. Both classes work in both modes:
+"""Project middleware. It works in both modes:
 
 - WSGI (runserver, tests with Client): get_response is a normal function,
   __call__ runs the sync code;
@@ -16,9 +16,8 @@ https://docs.djangoproject.com/en/6.1/topics/http/middleware/#asynchronous-suppo
 import logging
 import time
 
-from asgiref.sync import iscoroutinefunction, markcoroutinefunction, sync_to_async
+from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.conf import settings
-from whitenoise.middleware import WhiteNoiseMiddleware
 
 logger = logging.getLogger(__name__)  # "config.middleware"
 
@@ -119,55 +118,3 @@ class RequestTimingMiddleware:
             return "anonymous"
         user = await auser()
         return user.username if user.is_authenticated else "anonymous"
-
-
-class AsyncWhiteNoiseMiddleware(WhiteNoiseMiddleware):
-    """WhiteNoise (static files without nginx) that also works under ASGI.
-
-    WhiteNoise 6.12 is sync only (see the module docstring for the cost).
-    This subclass keeps WhiteNoise's own logic and adds the async path:
-    - a static URL -> WhiteNoise's response, its file is read in a worker
-      thread chunk by chunk (no blocking of the event loop);
-    - anything else -> straight to the next middleware, awaited.
-    In settings.MIDDLEWARE instead of "whitenoise.middleware.WhiteNoiseMiddleware".
-    """
-
-    sync_capable = True
-    async_capable = True
-
-    def __init__(self, get_response=None, settings=settings):
-        super().__init__(get_response, settings)
-        self.is_async = iscoroutinefunction(get_response)
-        if self.is_async:
-            markcoroutinefunction(self)
-
-    def __call__(self, request):
-        if self.is_async:
-            return self.__acall__(request)
-        return super().__call__(request)
-
-    async def __acall__(self, request):
-        # The same lookup as WhiteNoiseMiddleware.__call__. find_file() reads
-        # the disk (only with autorefresh = DEBUG): in a thread.
-        if self.autorefresh:
-            static_file = await sync_to_async(self.find_file)(request.path_info)
-        else:
-            static_file = self.files.get(request.path_info)  # a dict, in memory
-        if static_file is None:
-            return await self.get_response(request)
-
-        response = await sync_to_async(self.serve)(static_file, request)
-        if response.streaming:
-            # A FileResponse iterates over an open file (sync). Django's ASGI
-            # handler would read it whole into memory with a warning
-            # ("StreamingHttpResponse must consume synchronous iterators");
-            # an async iterator reads it in chunks in a thread instead.
-            response.streaming_content = _read_in_thread(iter(response.streaming_content))
-        return response
-
-
-async def _read_in_thread(chunks):
-    """Async iterator over a sync one: every next() runs in a worker thread."""
-    end = object()
-    while (chunk := await sync_to_async(next, thread_sensitive=False)(chunks, end)) is not end:
-        yield chunk

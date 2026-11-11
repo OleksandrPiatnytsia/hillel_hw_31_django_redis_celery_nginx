@@ -67,8 +67,8 @@ USER app
 # It needs the executable bit: git keeps it (chmod +x), COPY . . copies it.
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
-# Documentation only: the app listens on 8000. The port on your machine
-# is opened by "ports:" in docker-compose.yml.
+# Documentation only: the app listens on 8000, inside the Docker network.
+# Browsers reach it through nginx (docker-compose.yml: nginx "8000:80").
 EXPOSE 8000
 
 # Default command: gunicorn as the process manager + uvicorn workers, i.e.
@@ -84,6 +84,15 @@ EXPOSE 8000
 #   --bind 0.0.0.0:8000     - listen on all interfaces of the container;
 #                             127.0.0.1 would be reachable only from inside it
 #   --workers 3             - 3 processes handle requests in parallel
+#   --forwarded-allow-ips="*"
+#                           - trust X-Forwarded-For / X-Forwarded-Proto from
+#                             any address. Requests come only from nginx (web
+#                             has no published port), and nginx sets these
+#                             headers itself (nginx/default.conf). uvicorn then
+#                             puts the client's real address into REMOTE_ADDR
+#                             and the scheme into request.is_secure(). The
+#                             default (127.0.0.1) would ignore them: nginx is
+#                             another container with another address.
 #   (no --access-logfile: RequestTimingMiddleware already logs one line per
 #   request, with the user and the duration; gunicorn's access log would
 #   repeat every request and add a line for every /health/ check)
@@ -97,4 +106,4 @@ EXPOSE 8000
 # The exec form ["...", "..."] (not a string): gunicorn becomes process
 # PID 1 itself and receives SIGTERM from `docker compose stop` directly,
 # so it finishes current requests and exits cleanly.
-CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn_worker.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "3", "--no-control-socket"]
+CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn_worker.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "3", "--forwarded-allow-ips=*", "--no-control-socket"]

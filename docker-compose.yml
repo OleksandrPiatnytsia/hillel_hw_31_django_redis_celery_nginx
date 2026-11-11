@@ -1,10 +1,12 @@
-# Local Docker setup: Django (web) + PostgreSQL (db) + Redis (redis)
+# Local Docker setup: nginx (nginx) in front of Django (web)
+# + PostgreSQL (db) + Redis (redis)
 # + Celery worker (celery) and scheduler (celery-beat)
-# + Stripe CLI (stripe-cli), which forwards Stripe webhooks to web.
+# + Stripe CLI (stripe-cli), which forwards Stripe webhooks to nginx -> web.
 #
 #   docker compose up --build -d   build the web image and start everything
 #   docker compose ps              state and health of the services
 #   docker compose logs -f web     follow the Django / gunicorn output
+#   docker compose logs -f nginx   every request (access log) and nginx errors
 #   docker compose logs -f stripe-cli   events from Stripe and web's answers
 #   docker compose logs -f celery celery-beat   background tasks and the schedule
 #   docker compose down            stop and remove the containers (volumes stay)
@@ -38,9 +40,14 @@ x-django: &django
     # Redis database 0: cache + sessions; database 1: the Celery queue
     REDIS_URL: redis://redis:6379/0
     CELERY_BROKER_URL: redis://redis:6379/1
-    # + "web": the stripe-cli service sends webhooks to http://web:8000/...,
-    # so the Host header is "web"; any host not in ALLOWED_HOSTS gets 400
-    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS},web
+    # Like production: no debug pages, no Debug Toolbar, DEBUG logs off.
+    # Possible now that nginx serves the media files (with DEBUG=True only
+    # Django's static() did it). .env keeps True for runserver on the Mac.
+    DJANGO_DEBUG: "False"
+    # + "nginx": the stripe-cli service sends webhooks to http://nginx/...,
+    # so the Host header is "nginx"; any host not in ALLOWED_HOSTS gets 400.
+    # Browsers come with "localhost:8000" (from .env; the port is ignored).
+    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS},nginx
 
 services:
   db:
@@ -106,11 +113,12 @@ services:
   web:
     # image, env_file, environment: from x-django above
     <<: *django
-    ports:
-      # http://localhost:8000 on the Mac -> gunicorn in the container
-      - "8000:8000"
+    # No "ports:" any more: gunicorn is reached only from the Docker network,
+    # through nginx. Port 8000 on the Mac belongs to nginx now.
+    expose:
+      - "8000"
     volumes:
-      # collectstatic output (docker-entrypoint.sh), served by WhiteNoise
+      # collectstatic output (docker-entrypoint.sh), served by nginx
       - static_data:/app/staticfiles
       # uploaded covers: survive rebuilding and recreating the container
       - media_data:/app/media
@@ -139,6 +147,37 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  nginx:
+    # Reverse proxy: serves /static/ and /media/ from the volumes, passes
+    # everything else to gunicorn (web). Config: nginx/default.conf.
+    # 1.30 = the current stable branch (even minor numbers are stable).
+    image: nginx:1.30-alpine
+    ports:
+      # http://localhost:8000 on the Mac -> nginx :80. The same address as
+      # before, so SITE_URL (links in emails, Stripe return pages) stays.
+      - "8000:80"
+    volumes:
+      # :ro = read-only: nginx only reads these files, it never needs to
+      # change them (a bug or a hole in nginx can't damage them either)
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_data:/app/staticfiles:ro
+      - media_data:/app/media:ro
+    healthcheck:
+      # A request through nginx to Django's /health/ (PostgreSQL + Redis):
+      # healthy = the whole chain answers. wget is in the alpine image.
+      # 127.0.0.1, not localhost: in the container localhost may resolve to
+      # IPv6 (::1) first, and nginx listens on IPv4 only.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      # web healthy = migrations and collectstatic are done: the static
+      # files are in the volume before nginx serves them
+      web:
         condition: service_healthy
 
   celery:
@@ -196,14 +235,15 @@ services:
       STRIPE_API_KEY: ${STRIPE_SECRET_KEY}
     command:
       - listen
-      # Inside the Docker network the site is "web", not localhost
+      # Through nginx, like a real webhook from Stripe in production.
+      # Inside the Docker network nginx is "nginx" (port 80), not localhost
       - --forward-to
-      - web:8000/payments/webhook/stripe/
+      - nginx/payments/webhook/stripe/
       # Only the events the site handles (StripeProvider.handle_webhook)
       - --events
       - checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired
     depends_on:
-      web:
+      nginx:
         condition: service_healthy
 
 # Named volumes: Docker keeps them in its own storage.

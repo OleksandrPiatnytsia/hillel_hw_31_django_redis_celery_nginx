@@ -1,0 +1,30 @@
+{% load i18n %}<!DOCTYPE html>
+{% comment %}
+Rendered by django.views.defaults.server_error when a view raises an
+exception. Only with DEBUG=False (in Docker); with DEBUG=True Django shows
+its technical page with the traceback instead.
+
+Standalone on purpose, not {% extends "base.html" %}: server_error renders
+it WITHOUT the request context (no user, no cart, no messages), and the
+error may come from the very code base.html depends on (the database, the
+cache). A page that can fail itself would end in a blank screen.
+No {% static %} either: a missing file would raise inside the error page.
+{% endcomment %}
+{% get_current_language as LANGUAGE_CODE %}
+<html lang="{{ LANGUAGE_CODE }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% translate "Server error" %}</title>
+</head>
+<body style="margin:0; padding:48px 16px; font-family:system-ui, Arial, sans-serif; color:#212529; text-align:center;">
+  <div style="font-size:64px;">🛠️</div>
+  <h1 style="font-size:24px; margin:16px 0 8px;">{% translate "Something went wrong on our side" %}</h1>
+  <p style="color:#6c757d; margin:0 0 24px;">
+    {% translate "We already know about it. Please try again in a few minutes." %}
+  </p>
+  <a href="/" style="display:inline-block; padding:10px 20px; background:#0d6efd; color:#ffffff; text-decoration:none; border-radius:6px;">
+    {% translate "Back to catalog" %}
+  </a>
+</body>
+</html>

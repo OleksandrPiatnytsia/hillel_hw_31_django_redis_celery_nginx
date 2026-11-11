@@ -35,8 +35,9 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
-    # Uploaded files (covers) in development. runserver serves static files
-    # by itself, but not media. In production nginx / storage does this.
+    # Uploaded files (covers) with runserver: it serves static files by
+    # itself, but not media. In Docker (DEBUG=False) nginx serves /media/
+    # from the media_data volume (nginx/default.conf).
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 if settings.ENABLE_DEBUG_TOOLBAR:

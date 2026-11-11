@@ -31,10 +31,15 @@ CACHES = {
     }
 }
 
-# No collected static files in tests: without this WhiteNoise warns
-# "No directory at: .../staticfiles/" on every request. {% static %} in the
-# templates still builds the URLs (it doesn't read the files).
+# No collected static files in tests: the plain storage, not the Manifest
+# one. Tests run with DEBUG=False, and ManifestStaticFilesStorage would need
+# staticfiles.json from collectstatic for every {% static %} ("Missing
+# staticfiles manifest entry"). {% static %} still builds the URLs.
 STATIC_ROOT = None
+STORAGES = {
+    **STORAGES,  # noqa: F405 (from settings)
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
 
 STRIPE_SECRET_KEY = "sk_test_fake"
 STRIPE_WEBHOOK_SECRET = "whsec_test_fake"

@@ -90,12 +90,9 @@ MIDDLEWARE = [
     # Our middleware, first: its timer covers every middleware below + the view
     "config.middleware.RequestTimingMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    # WhiteNoise: serves the collected static files (STATIC_ROOT) from
-    # gunicorn, without nginx. Right after SecurityMiddleware (WhiteNoise
-    # docs): static responses still get the security headers, but skip
-    # sessions, auth, CSRF and the rest below.
-    # (our subclass: WhiteNoise itself is sync only, see config/middleware.py)
-    "config.middleware.AsyncWhiteNoiseMiddleware",
+    # No static files middleware: in Docker nginx serves /static/ and
+    # /media/ itself (nginx/default.conf), the request never reaches Django;
+    # runserver (DEBUG=True) serves static files by itself.
     "django.contrib.sessions.middleware.SessionMiddleware",
     # Chooses the language of every request (see "Internationalization"
     # below) and activates it for the view and the templates. After
@@ -363,24 +360,28 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 
 # Target directory for `collectstatic` (used in production, not in git).
-# In Docker it is a volume (static_data); WhiteNoise serves files from here.
+# In Docker it is a volume (static_data): web fills it on start
+# (docker-entrypoint.sh), nginx serves it at /static/.
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # https://docs.djangoproject.com/en/6.1/ref/settings/#storages
 # "default" is Django's usual storage for uploaded files (covers in MEDIA_ROOT).
-# "staticfiles": WhiteNoise's storage. During `collectstatic` it also writes
-# a compressed copy of every file (style.css.gz, style.css.br); WhiteNoise
-# sends it to browsers that accept compression.
-# Not CompressedManifestStaticFilesStorage (names with a hash, style.4f3a.css):
-# with DEBUG=False it needs collectstatic to have run first, and
-# `manage.py test` always runs with DEBUG=False, so every test that renders
-# base.html ({% static %}) would fail with "Missing staticfiles manifest entry".
+# "staticfiles": ManifestStaticFilesStorage. collectstatic writes every file
+# a second time with a hash of its content in the name
+#   css/style.css -> css/style.3f9a2c41b7e0.css
+# and a list of them (staticfiles.json); {% static "css/style.css" %} gives
+# the hashed name. A changed file = a new name, so nginx may tell browsers
+# to keep static files for a year (Cache-Control: immutable): after a
+# deploy the pages link to the new names, nothing stale is used.
+# With DEBUG=True (runserver) the plain names are used, no collectstatic needed.
+# The tests use the plain storage (config/settings_test.py): they run with
+# DEBUG=False and without collectstatic.
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        "BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage",
     },
 }
 
@@ -494,6 +495,12 @@ REST_FRAMEWORK = {
     # 429 Too Many Requests + header Retry-After (seconds to wait).
     #   - anonymous: counted per IP address;
     #   - user: per user id, whichever IP address the requests come from.
+    # The IP of an anonymous client = REMOTE_ADDR only. The default (None)
+    # takes X-Forwarded-For when the request has it, and any client can
+    # send that header with a new made-up address every time, so the "anon"
+    # limit would never be reached. Behind nginx REMOTE_ADDR is already the
+    # real client address (gunicorn --forwarded-allow-ips, see Dockerfile).
+    "NUM_PROXIES": 0,
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
