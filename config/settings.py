@@ -221,6 +221,14 @@ CACHES = {
     }
 }
 
+# How long cached data lives. Changes delete it at once (signals in
+# books/signals.py and api/signals.py); the timeout is a safety net for a
+# change that skips the signals (QuerySet.update(), SQL by hand).
+# Book page object + HTML fragments of books (books/cache.py)
+BOOK_CACHE_TIMEOUT = int(os.getenv("BOOK_CACHE_TIMEOUT", 60 * 60))  # 1 hour
+# Whole responses of /api/authors/ and /api/categories/ (api/cache.py)
+API_CACHE_TIMEOUT = int(os.getenv("API_CACHE_TIMEOUT", 10 * 60))  # 10 minutes
+
 # Sessions: read from the Redis cache, written to both the cache and the
 # database (django_session table). Fast reads, and the logins survive a
 # Redis restart: on a cache miss Django reads the session from PostgreSQL.

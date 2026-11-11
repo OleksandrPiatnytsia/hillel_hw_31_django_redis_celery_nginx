@@ -1,10 +1,11 @@
 import logging
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
 from django.db.models import Count, ProtectedError, Q
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse_lazy
 from django.utils.formats import number_format
@@ -21,6 +22,7 @@ from django.views.generic import (
 
 from cart.cart import Cart
 
+from .cache import get_cached_book
 from .forms import BookFilterForm, BookForm
 from .models import Author, Book
 
@@ -95,26 +97,33 @@ class BookListView(ElidedPaginationMixin, ListView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["filter_form"] = self.filter_form
+        # Timeout of the {% cache %} fragments of the book cards
+        context["cache_timeout"] = settings.BOOK_CACHE_TIMEOUT
         return context
 
 
 class BookDetailView(DetailView):
-    """Single book. Template: books/book_detail.html"""
+    """Single book. Template: books/book_detail.html
+
+    The book (with author and categories) comes from the cache
+    (books.cache.get_cached_book): a cache hit needs no query for it.
+    Only the stock is read every time: one small query when the template
+    asks for book.stock (it is never cached, orders change it).
+    """
 
     model = Book
     context_object_name = "book"
 
-    def get_queryset(self):
-        return (
-            super()
-            .get_queryset()
-            .select_related("author")
-            .prefetch_related("categories")
-            .with_stock()
-        )
+    def get_object(self, queryset=None):
+        try:
+            return get_cached_book(self.kwargs["pk"])
+        except Book.DoesNotExist:
+            # The same 404 page as DetailView's own get_object()
+            raise Http404 from None
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context["cache_timeout"] = settings.BOOK_CACHE_TIMEOUT
         # "In your cart: 2" under the button. Templates can't call a method
         # with an argument (cart.quantity_of(book)), so it's computed here.
         context["in_cart"] = Cart(self.request).quantity_of(self.object)

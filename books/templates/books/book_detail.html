@@ -1,9 +1,18 @@
 {% extends "base.html" %}
-{% load i18n %}
+{% load i18n cache %}
+{# Cached fragments ({% cache %}): parts that are the same for every visitor. #}
+{# The key: the fragment name + book.pk + the language (the texts around the #}
+{# data are translated). books/signals.py deletes them when the book, its #}
+{# author or its categories change (the names are in books.cache.FRAGMENTS). #}
+{# NOT inside them, because they differ per visitor or per minute: #}
+{#   csrf_token (a cached token would be someone else's -> 403 and a leak), #}
+{#   "In your cart", the Edit / Delete buttons (permissions), the stock. #}
 
 {% block title %}{{ book.title }}{% endblock %}
 
 {% block content %}
+{# Inside the block: in a template with {% extends %} code outside blocks never runs #}
+{% get_current_language as LANGUAGE_CODE %}
 <nav aria-label="{% translate 'Breadcrumb' %}">
   <ol class="breadcrumb">
     <li class="breadcrumb-item"><a href="{% url 'books:list' %}">{% translate "Catalog" %}</a></li>
@@ -14,6 +23,7 @@
 <div class="card shadow-sm">
   <div class="card-body p-4">
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+      {% cache cache_timeout book_detail_header book.pk LANGUAGE_CODE %}
       <img class="book-cover book-cover--large" src="{{ book.cover_url }}"
            alt="{% blocktranslate with title=book.title %}Cover of {{ title }}{% endblocktranslate %}">
       <div class="flex-grow-1">
@@ -25,6 +35,7 @@
              href="{% url 'books:list' %}?category={{ category.slug }}">{{ category.name }}</a>
         {% endfor %}
       </div>
+      {% endcache %}
       <div class="text-end">
         <div class="fs-4 fw-semibold">{{ book.price }} ₴</div>
         {% include "books/includes/stock_badge.html" with book=book %}
@@ -53,6 +64,7 @@
 
     <hr>
 
+    {% cache cache_timeout book_detail_body book.pk LANGUAGE_CODE %}
     {% if book.description %}
       {# linebreaks: \n -> <br>, blank line -> new <p>; text is still auto-escaped #}
       {{ book.description|linebreaks }}
@@ -66,6 +78,7 @@
         Added {{ added }} · updated {{ updated }}
       {% endblocktranslate %}
     </p>
+    {% endcache %}
   </div>
 
   <div class="card-footer d-flex gap-2">

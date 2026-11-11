@@ -25,6 +25,7 @@ Who may do what:
 import logging
 
 from django.db.models import Count, ProtectedError
+from django.utils.decorators import method_decorator
 from django.utils.translation import gettext_lazy as _
 from rest_framework import viewsets
 from rest_framework.permissions import (
@@ -37,6 +38,7 @@ from rest_framework.permissions import (
 
 from books.models import Author, Book, Category
 
+from ..cache import cache_api_response
 from ..docs import author_schema, book_schema, category_schema
 from ..exceptions import Conflict
 from ..filters import BookFilter
@@ -138,7 +140,22 @@ class StaffWriteMixin:
         return [IsAdminUser(), DjangoModelPermissions()]
 
 
+# Whole responses of GET (list and one object) from the cache for
+# API_CACHE_TIMEOUT; any change of the catalog drops them (api/signals.py).
+# Hits skip the view entirely: no SQL, no throttling counter.
+def cache_reads(viewset_class):
+    """Class decorator: cache the list and retrieve actions of the ViewSet.
+
+    method_decorator: cache_page is written for functions (request first),
+    a ViewSet method gets self first; it adapts one to the other.
+    """
+    for action in ("list", "retrieve"):
+        viewset_class = method_decorator(cache_api_response, name=action)(viewset_class)
+    return viewset_class
+
+
 @author_schema
+@cache_reads
 class AuthorViewSet(StaffWriteMixin, LoggedModelViewSet):
     """Authors. ?search=<name>, ?ordering=name | -books_count."""
 
@@ -152,6 +169,7 @@ class AuthorViewSet(StaffWriteMixin, LoggedModelViewSet):
 
 
 @category_schema
+@cache_reads
 class CategoryViewSet(StaffWriteMixin, LoggedModelViewSet):
     """Categories. ?search=<name>, ?ordering=name | -books_count."""
 

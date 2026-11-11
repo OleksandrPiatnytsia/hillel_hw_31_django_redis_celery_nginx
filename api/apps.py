@@ -12,3 +12,7 @@ class ApiConfig(AppConfig):
 
     name = "api"
     verbose_name = "REST API"
+
+    def ready(self):
+        # Invalidation of the cached /api/authors/ and /api/categories/
+        from . import signals  # noqa: F401
