@@ -16,6 +16,8 @@ stripe==16.1.0
 # [redis]: the Redis broker transport. Worker: celery -A config worker,
 # schedule: celery -A config beat (services celery / celery-beat)
 celery[redis]==5.7.0
+# Error tracking (sentry.io): Django, Celery, logging integrations included
+sentry-sdk==2.74.0
 # REST API (app api/): serializers, ViewSets, routers, the browsable API
 djangorestframework==3.18.3
 # Filters in the API: ?category=..&price_min=.. (FilterSet classes)

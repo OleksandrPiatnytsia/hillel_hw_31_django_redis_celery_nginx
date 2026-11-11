@@ -3,12 +3,14 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
-from config.views import health, set_language
+from config.views import health, sentry_debug, set_language
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     # 200 / 503: are PostgreSQL and Redis reachable (docker-compose healthcheck)
     path("health/", health, name="health"),
+    # Superuser only: raises an error to check Sentry (404 for anyone else)
+    path("sentry-debug/", sentry_debug, name="sentry_debug"),
     # The language switcher (navbar): POST -> cookie + User.language -> back.
     # The same name as Django's view: {% url 'set_language' %}
     path("i18n/setlang/", set_language, name="set_language"),

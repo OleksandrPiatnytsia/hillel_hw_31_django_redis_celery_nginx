@@ -48,6 +48,9 @@ x-django: &django
     # so the Host header is "nginx"; any host not in ALLOWED_HOSTS gets 400.
     # Browsers come with "localhost:8000" (from .env; the port is ignored).
     DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS},nginx
+    # Errors from the containers are marked "docker" in Sentry, the ones of
+    # runserver on the Mac "local" (.env). SENTRY_DSN itself comes from .env.
+    SENTRY_ENVIRONMENT: docker
 
 services:
   db:

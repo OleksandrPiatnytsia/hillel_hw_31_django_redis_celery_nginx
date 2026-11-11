@@ -6,7 +6,7 @@ import uuid
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 from django.views.i18n import set_language as django_set_language
@@ -125,3 +125,17 @@ def set_language(request):
         user.language = language
         user.save(update_fields=["language"])
     return response
+
+
+def sentry_debug(request):
+    """/sentry-debug/: an error on purpose, to check Sentry end to end.
+
+    Only for a superuser; anyone else gets 404, as if the URL didn't exist
+    (a public URL that always fails would let bots fill the Sentry quota).
+    The superuser gets templates/500.html (DEBUG=False) and Sentry gets
+    a ZeroDivisionError with this request.
+    """
+    if not request.user.is_superuser:
+        raise Http404
+    logger.warning("Sentry check: raising ZeroDivisionError on purpose")
+    return 1 / 0

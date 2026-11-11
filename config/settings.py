@@ -691,3 +691,25 @@ LOGGING = {
 
 # RequestTimingMiddleware logs requests slower than this as WARNING
 REQUEST_SLOW_MS = 500
+
+
+# Sentry (sentry.io): errors of the site and of the Celery tasks.
+# Empty SENTRY_DSN -> Sentry is off (runserver without a project, tests).
+# At the end of the settings: init_sentry() starts the SDK in every process
+# that loads them (web, celery, celery-beat). See config/sentry.py.
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+# "local" for runserver, "docker" in docker-compose.yml: a filter in Sentry
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "local")
+# Part of the requests and tasks timed in Sentry -> Performance:
+# 0.1 = every tenth; 0 = errors only. The free plan has a monthly limit.
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+
+if not TESTING:
+    # Imported only when needed: the tests never load the Sentry SDK
+    from config.sentry import init_sentry
+
+    init_sentry(
+        SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+    )
