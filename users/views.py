@@ -18,6 +18,7 @@ from django.views.generic import CreateView, TemplateView, UpdateView
 from config.i18n import set_language_cookie
 
 from .forms import LoginForm, ProfileForm, SignUpForm
+from .tools import admin_tools
 
 logger = logging.getLogger(__name__)  # "users.views"
 
@@ -134,6 +135,11 @@ class ProfileView(LoginRequiredMixin, TemplateView):
         # get_all_permissions(): own permissions + permissions of all groups,
         # as "app_label.codename" strings. A superuser gets every permission.
         context["permissions"] = sorted(user.get_all_permissions())
+        # Links to the service pages (admin, API docs, Flower, Sentry, ...):
+        # only a superuser can use them all (Flower and /sentry-debug/ are
+        # for the site's owner), so only a superuser sees them
+        if user.is_superuser:
+            context["tool_groups"] = admin_tools()
         return context
 
 

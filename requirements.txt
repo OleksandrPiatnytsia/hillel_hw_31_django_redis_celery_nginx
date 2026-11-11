@@ -18,6 +18,8 @@ stripe==16.1.0
 celery[redis]==5.7.0
 # Error tracking (sentry.io): Django, Celery, logging integrations included
 sentry-sdk==2.74.0
+# Web dashboard of the Celery tasks and workers (service "flower")
+flower==2.2.0
 # REST API (app api/): serializers, ViewSets, routers, the browsable API
 djangorestframework==3.18.3
 # Filters in the API: ?category=..&price_min=.. (FilterSet classes)

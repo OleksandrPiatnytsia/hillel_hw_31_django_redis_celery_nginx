@@ -321,3 +321,53 @@ def test_every_response_has_timing_headers(client):
 
     assert response["X-Request-Duration"].endswith("ms")
     assert response["Server-Timing"].startswith("app;dur=")
+
+
+# ---------------------------------------------------------------------------
+# Profile: "Tools" (users/tools.py), superuser only
+# ---------------------------------------------------------------------------
+
+
+def tool_links(response):
+    return {tool.title: tool.url for _group, tools in response.context["tool_groups"] for tool in tools}
+
+
+# Generated with AI
+def test_superuser_sees_the_tools_and_every_link_works(superuser_client, settings):
+    settings.FLOWER_URL = "http://localhost:5555"
+    settings.SENTRY_ISSUES_URL = "https://example.sentry.io/issues/?project=1"
+    settings.STRIPE_SECRET_KEY = "sk_test_fake"
+
+    response = superuser_client.get(reverse("users:profile"))
+
+    links = tool_links(response)
+    assert links["Flower"] == "http://localhost:5555"
+    assert links["Sentry"] == "https://example.sentry.io/issues/?project=1"
+    assert links["Stripe"] == "https://dashboard.stripe.com/test/payments"
+    assert 'href="http://localhost:5555" target="_blank" rel="noopener"' in response.content.decode()
+    # Every page of the project in the list opens for the superuser.
+    # Not /sentry-debug/: it fails on purpose (its own tests in test_sentry.py)
+    internal = [url for url in links.values() if url.startswith("/") and url != reverse("sentry_debug")]
+    assert len(internal) == 8  # admin x3, API x4, health
+    for url in internal:
+        assert superuser_client.get(url).status_code == 200, url
+
+
+# Generated with AI
+def test_services_that_are_not_set_up_have_no_link(superuser_client, settings):
+    settings.SENTRY_ISSUES_URL = ""
+    settings.STRIPE_SECRET_KEY = ""
+
+    links = tool_links(superuser_client.get(reverse("users:profile")))
+
+    assert "Sentry" not in links
+    assert "Stripe" not in links
+
+
+# Generated with AI
+@pytest.mark.parametrize("client_fixture", ["customer_client", "manager_client"])
+def test_tools_are_only_for_the_superuser(client_fixture, request):
+    response = request.getfixturevalue(client_fixture).get(reverse("users:profile"))
+
+    assert "tool_groups" not in response.context
+    assert "Flower" not in response.content.decode()

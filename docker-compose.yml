@@ -1,6 +1,7 @@
 # Local Docker setup: nginx (nginx) in front of Django (web)
 # + PostgreSQL (db) + Redis (redis)
 # + Celery worker (celery) and scheduler (celery-beat)
+# + Flower (flower): the dashboard of the Celery tasks, http://localhost:5555
 # + Stripe CLI (stripe-cli), which forwards Stripe webhooks to nginx -> web.
 #
 #   docker compose up --build -d   build the web image and start everything
@@ -23,15 +24,17 @@
 # the same settings. "x-" = an extension field, ignored by compose itself;
 # "&django" names it, "<<: *django" below copies its keys into a service.
 x-django: &django
-  # Image from the Dockerfile in this folder. One name for the three
-  # services: built once, the others reuse it.
+  # Image from the Dockerfile in this folder. One name for web, celery,
+  # celery-beat and flower: built once, the others reuse it.
   build: .
   image: hillel-bookstore-django
   # All variables from .env go into the container (DJANGO_SECRET_KEY,
   # DJANGO_DEBUG, POSTGRES_*, ...). The .env file itself is not in the
   # image (.dockerignore).
   env_file: .env
-  environment:
+  # &django-env: a name for this block, so flower can add one variable to
+  # it (a service's "environment:" replaces the one of x-django, not merges)
+  environment: &django-env
     # "environment" wins over "env_file": in .env the hosts are
     # "localhost" (for runserver on the Mac); inside the Docker network
     # PostgreSQL and Redis are reached by service name.
@@ -222,6 +225,43 @@ services:
       web:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  flower:
+    # Web dashboard of Celery: workers, every task with its arguments,
+    # state, time and error, retries, the queue length; graphs.
+    # It listens to the events of the worker (CELERY_WORKER_SEND_TASK_EVENTS
+    # in settings.py) through the broker (Redis db 1). The same image as
+    # the worker: Flower knows our task names and Celery settings.
+    # The task list lives in Flower's memory: after a restart it shows the
+    # tasks from that moment on (the logs keep the history).
+    <<: *django
+    #   --port=5555                   the dashboard's port in the container
+    #   --purge_offline_workers=60    a worker that has been offline for 60 s
+    #                                 disappears from the list (after each
+    #                                 rebuild the worker gets a new name:
+    #                                 celery@<new container id>)
+    command: ["celery", "-A", "config", "flower", "--port=5555", "--purge_offline_workers=60"]
+    environment:
+      # Everything from x-django + the login. Flower reads FLOWER_* variables
+      # as its options (FLOWER_BASIC_AUTH = --basic-auth). ":?" = compose
+      # refuses to start without it: Flower can stop tasks and workers.
+      <<: *django-env
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:?set FLOWER_BASIC_AUTH=user:password in .env}
+    ports:
+      # 127.0.0.1: only this Mac can open it, not other devices in the
+      # same Wi-Fi network (the plain "5555:5555" listens on all of them)
+      - "127.0.0.1:5555:5555"
+    healthcheck:
+      # /healthcheck answers "OK" without a login. No curl/wget in the
+      # Python image: urllib, which raises (exit code 1) on an error.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5555/healthcheck', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      celery:
         condition: service_healthy
 
   stripe-cli:

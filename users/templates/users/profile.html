@@ -72,6 +72,28 @@
           <li>{% if perms.books.delete_book %}✅{% else %}❌{% endif %} {% translate "delete books" %}</li>
         </ul>
 
+        {% if tool_groups %}
+          {# Superuser only (ProfileView): links to the service pages, users/tools.py #}
+          <h2 class="h6">🧰 {% translate "Tools" %}</h2>
+          <div class="row g-3 mb-3">
+            {% for group_title, tools in tool_groups %}
+              <div class="col-sm-6">
+                <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ group_title }}</div>
+                <ul class="list-unstyled mb-0">
+                  {% for tool in tools %}
+                    <li class="mb-1">
+                      {# rel="noopener": the new tab can't reach back into this page #}
+                      <a href="{{ tool.url }}"{% if tool.external %} target="_blank" rel="noopener"{% endif %}>{{ tool.title }}{% if tool.external %} ↗{% endif %}</a>
+                      <div class="small text-body-secondary">{{ tool.description }}</div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endfor %}
+          </div>
+          <hr>
+        {% endif %}
+
         <details>
           <summary class="small text-body-secondary">{% blocktranslate with count=permissions|length %}All permissions ({{ count }}){% endblocktranslate %}</summary>
           <ul class="small font-monospace mt-2 mb-0">

@@ -262,6 +262,19 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 # soft -> SoftTimeLimitExceeded inside the task, hard -> the process is killed
 CELERY_TASK_SOFT_TIME_LIMIT = 5 * 60
 CELERY_TASK_TIME_LIMIT = 6 * 60
+# Events for Flower (service "flower"): the worker reports every step of a
+# task (received, started, succeeded / failed / retried) to the broker,
+# Flower reads them and shows the tasks live. Without these Flower sees the
+# workers but an empty task list.
+#   WORKER_SEND_TASK_EVENTS: the worker's events (= celery worker -E)
+#   TASK_SEND_SENT_EVENT:    + "sent" when web / beat put a task into the
+#                            queue, so a task waiting for a free worker
+#                            is visible too (state PENDING -> RECEIVED ...)
+CELERY_WORKER_SEND_TASK_EVENTS = True
+CELERY_TASK_SEND_SENT_EVENT = True
+# Where the browser opens Flower: the link in the profile ("Tools").
+# docker-compose.yml publishes it on this Mac only.
+FLOWER_URL = os.getenv("FLOWER_URL", "http://localhost:5555")
 
 # Celery Beat: the schedule of periodic tasks (service "celery-beat").
 # Beat only PUTS the tasks into the queue at these moments; the worker runs
@@ -702,6 +715,9 @@ SENTRY_DSN = os.getenv("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "local")
 # Part of the requests and tasks timed in Sentry -> Performance:
 # 0.1 = every tenth; 0 = errors only. The free plan has a monthly limit.
+# The project's Issues page, for the link in the profile ("Tools", superuser
+# only): https://<org>.sentry.io/issues/?project=<id>. Empty -> no link.
+SENTRY_ISSUES_URL = os.getenv("SENTRY_ISSUES_URL", "")
 SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
 
 if not TESTING:
