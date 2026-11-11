@@ -165,3 +165,51 @@ def test_stripe_page_language_follows_the_site(customer, customer_client, fake_s
     assert params["locale"] == stripe_locale
     product = params["line_items"][0]["price_data"]["product_data"]["name"]
     assert product == ("Bookstore: order #" if site_language == "en" else "Книгарня: замовлення #") + str(order.pk)
+
+
+# ---------------------------------------------------------------------------
+# The emails of the background tasks (hw_31): every one in the recipient's
+# language, without English pieces of untranslated texts
+# ---------------------------------------------------------------------------
+
+# Words of the English templates that a Ukrainian email must not contain
+ENGLISH = [
+    "Bookstore", "Hello", "Total", "UAH", "Order page", "was not paid", "If you still",
+    "report for", "Sales report", "Orders:", "Best sellers", "Low stock", "Details",
+]
+# Not "left" alone: the HTML part has align="left"; "2 left" is checked below
+
+
+def _all_texts(message):
+    # The report is a plain EmailMessage (text + CSV files), no HTML part
+    html = [part.content for part in getattr(message, "alternatives", [])]
+    return " ".join([message.subject, message.body, *html])
+
+
+# Generated with AI
+@pytest.mark.parametrize("language", ["uk", "en"])
+def test_task_emails_are_in_the_language_of_the_recipient(language, mailoutbox):
+    from orders.emails import send_order_cancelled_email, send_order_created_email
+    from orders.reports import build_daily_report, send_daily_report_email
+
+    customer = UserFactory(language=language)
+    UserFactory(language=language, groups=["Managers"])
+    book = BookFactory(title="Kobzar", stock=2)  # low stock: that part of the report too
+    order = OrderFactory(user=customer, items=[(book, 1)])
+
+    send_order_created_email(order.pk)
+    send_order_cancelled_email(order.pk)
+    send_daily_report_email(build_daily_report(order.created_at.date()))
+
+    assert len(mailoutbox) == 3
+    texts = [_all_texts(message) for message in mailoutbox]
+    if language == "uk":
+        for text in texts:
+            assert [word for word in ENGLISH if word in text] == []
+        assert "скасовано" in mailoutbox[1].subject
+        assert "звіт за" in mailoutbox[2].subject
+        assert "Мало на складі: 1 книга." in mailoutbox[2].body
+        assert "Kobzar: залишилось 2" in mailoutbox[2].body
+    else:
+        assert "is cancelled" in mailoutbox[1].subject
+        assert "Low stock: 1 book." in mailoutbox[2].body

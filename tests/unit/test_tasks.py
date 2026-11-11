@@ -6,6 +6,7 @@ runs the task here, at once, with its retries (without the pauses).
 
 import csv
 import io
+import logging
 import smtplib
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -19,7 +20,7 @@ from kombu.exceptions import OperationalError
 from config.celery import app as celery_app
 from orders.models import Order
 from orders.reports import build_daily_report
-from orders.services import create_order
+from orders.services import cancel_order, create_order
 from orders.tasks import (
     cancel_unpaid_orders,
     send_daily_report,
@@ -126,6 +127,46 @@ def test_cancel_unpaid_orders_task_cancels_only_old_orders(customer, settings):
     book.refresh_from_db()
     assert (old.status, new.status) == (Order.Status.CANCELLED, Order.Status.NEW)
     assert book.stock == 10 - 3  # the 2 copies of the old order are back
+
+
+# Generated with AI
+def test_automatic_cancellation_emails_the_customer(
+    customer, settings, mailoutbox, django_capture_on_commit_callbacks
+):
+    settings.ORDER_UNPAID_MAX_AGE_HOURS = 24
+    book = BookFactory(title="Kobzar")
+    order = create_order(customer, {book.pk: 2}, **DELIVERY)
+    Order.objects.filter(pk=order.pk).update(created_at=timezone.now() - timedelta(hours=25))
+
+    with django_capture_on_commit_callbacks(execute=True):
+        cancel_unpaid_orders.delay()
+
+    assert [message.to for message in mailoutbox] == [[customer.email]]
+    message = mailoutbox[0]
+    assert f"#{order.pk}" in message.subject
+    assert "Kobzar" in message.body
+    assert "Kobzar" in message.alternatives[0].content  # the HTML part
+
+
+# Generated with AI
+def test_cancel_unpaid_orders_logs_every_run_even_with_nothing_to_cancel(caplog):
+    with caplog.at_level(logging.INFO, logger="orders"):
+        cancel_unpaid_orders.delay()
+
+    assert "Unpaid orders older than 1 day, 0:00:00: cancelled 0, skipped 0" in caplog.text
+
+
+# Generated with AI
+def test_customer_cancelling_own_order_gets_no_cancellation_email(
+    customer, mailoutbox, django_capture_on_commit_callbacks
+):
+    book = BookFactory()
+    order = create_order(customer, {book.pk: 1}, **DELIVERY)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        cancel_order(order.pk, user=customer)
+
+    assert mailoutbox == []  # the customer pressed "Cancel" and knows
 
 
 # Generated with AI

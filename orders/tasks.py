@@ -11,7 +11,7 @@ from django.conf import settings
 from django.core.management import call_command
 from django.utils import timezone
 
-from .emails import send_order_created_email
+from .emails import send_order_cancelled_email, send_order_created_email
 from .reports import build_daily_report, send_daily_report_email
 
 # Retries of a failed email: only for errors that may pass by themselves.
@@ -37,13 +37,20 @@ def send_order_created_email_task(order_id):
     send_order_created_email(order_id, raise_errors=True)
 
 
+@shared_task(**EMAIL_RETRY)
+def send_order_cancelled_email_task(order_id):
+    """ "Order #N is cancelled" after the automatic cancellation
+    (orders.services.cancel_order(..., notify_customer=True))."""
+    send_order_cancelled_email(order_id, raise_errors=True)
+
+
 @shared_task
 def cancel_unpaid_orders():
     """Every hour: the cancel_unpaid_orders command with the age from settings.
 
     The same code as by hand (python manage.py cancel_unpaid_orders): the
-    command logs every cancelled order; its text output goes to the
-    worker's log line by line.
+    command logs every cancelled order and queues the "order cancelled"
+    email for its customer.
     """
     call_command("cancel_unpaid_orders", f"--older-than={settings.ORDER_UNPAID_MAX_AGE_HOURS}h")
 

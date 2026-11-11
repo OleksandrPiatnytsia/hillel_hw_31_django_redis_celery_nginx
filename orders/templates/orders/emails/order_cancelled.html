@@ -1,0 +1,59 @@
+{% comment %}
+HTML part of the "order cancelled" email (automatic cancellation of an
+unpaid order). Inline styles and a table layout, like order_created.html.
+{% endcomment %}
+{% load i18n %}
+{% get_current_language as LANGUAGE_CODE %}
+<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}">
+<body style="margin:0; padding:24px; background:#f5f5f5; font-family:Arial, sans-serif; color:#212529;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:8px;">
+    <tr>
+      <td style="padding:24px;">
+        <h1 style="font-size:20px; margin:0 0 16px;">📚 {% translate "Bookstore" %}</h1>
+        <p style="margin:0 0 8px;">{% if order.full_name %}{% blocktranslate with name=order.full_name %}Hello, {{ name }}!{% endblocktranslate %}{% else %}{% translate "Hello!" %}{% endif %}</p>
+        <p style="margin:0 0 16px;">
+          {% blocktranslate trimmed %}
+            <strong>{{ order }}</strong> was not paid in time, so we cancelled it
+            and returned the reserved books to the store.
+          {% endblocktranslate %}
+        </p>
+
+        <table role="presentation" width="100%" cellpadding="8" cellspacing="0"
+               style="border-collapse:collapse; font-size:14px; color:#6c757d;">
+          <tr style="background:#f1f3f5;">
+            <th align="left">{% translate "Book" %}</th>
+            <th align="right">{% translate "Price" %}</th>
+            <th align="right">{% translate "Qty" %}</th>
+            <th align="right">{% translate "Cost" %}</th>
+          </tr>
+          {% for item in order.items.all %}
+            <tr style="border-bottom:1px solid #dee2e6;">
+              <td>{{ item.title }}</td>
+              <td align="right" style="white-space:nowrap;">{{ item.price }} ₴</td>
+              <td align="right">{{ item.quantity }}</td>
+              <td align="right" style="white-space:nowrap;">{{ item.cost }} ₴</td>
+            </tr>
+          {% endfor %}
+          <tr>
+            <td colspan="3" align="right"><strong>{% translate "Total" %}</strong></td>
+            <td align="right" style="white-space:nowrap;"><strong>{{ order.total }} ₴</strong></td>
+          </tr>
+        </table>
+
+        <p style="margin:24px 0;">{% translate "If you still want these books, please place a new order:" %}</p>
+
+        <a href="{{ site_url }}"
+           style="display:inline-block; padding:10px 20px; background:#0d6efd; color:#ffffff; text-decoration:none; border-radius:6px;">
+          {% translate "Go to the catalog" %}
+        </a>
+        <p style="margin:16px 0 0; font-size:13px;"><a href="{{ order_url }}" style="color:#6c757d;">{% translate "Open the order" %}</a></p>
+      </td>
+    </tr>
+  </table>
+  <p style="text-align:center; font-size:12px; color:#6c757d;">
+    {% translate "Bookstore" %} · <a href="{{ site_url }}" style="color:#6c757d;">{{ site_url }}</a>
+  </p>
+</body>
+</html>

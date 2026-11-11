@@ -78,6 +78,20 @@ def _send(order, template_prefix, extra_context, raise_errors):
     return True
 
 
+def send_order_cancelled_email(order_id, raise_errors=False):
+    """ "Order #N is cancelled: it was not paid in time": the automatic
+    cancellation of an unpaid order (cancel_unpaid_orders, Celery Beat).
+
+    Takes the id: called after COMMIT, like send_order_created_email().
+    """
+    order = (
+        Order.objects.select_related("user")
+        .prefetch_related("items")
+        .get(pk=order_id)
+    )
+    return send_order_email(order, "orders/emails/order_cancelled", raise_errors=raise_errors)
+
+
 def send_order_created_email(order_id, raise_errors=False):
     """ "Order #N is created": items, total, delivery data, link to the order.
 

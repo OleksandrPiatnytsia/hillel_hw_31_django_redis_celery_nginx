@@ -8,7 +8,9 @@ Usage:
     python manage.py cancel_unpaid_orders --older-than 30m   # 30m, 12h, 2d
     python manage.py cancel_unpaid_orders --dry-run          # only show them
 
-Run by hand for now; later on a schedule (Celery beat / cron).
+Runs every hour on its own (Celery Beat: orders.tasks.cancel_unpaid_orders);
+by hand it does the same. The customer of every cancelled order gets the
+email "order cancelled" (not with --dry-run).
 """
 
 import argparse
@@ -98,7 +100,7 @@ class Command(BaseCommand):
         # after this SELECT wins, the order is skipped
         for order_id in orders.values_list("pk", flat=True):
             try:
-                cancel_order(order_id, only_unpaid=True)
+                cancel_order(order_id, only_unpaid=True, notify_customer=True)
             except OrderError as error:
                 skipped += 1
                 self.stdout.write(self.style.WARNING(_("skipped: %(error)s") % {"error": error}))
@@ -107,6 +109,11 @@ class Command(BaseCommand):
             self.stdout.write(_("cancelled: order #%(number)s") % {"number": order_id})
             logger.info("Order #%s cancelled: unpaid for more than %s", order_id, age)
 
+        # Every run, also with nothing to do: the log shows that the hourly
+        # run (Celery Beat) happened, not only the runs that cancelled something
+        logger.info(
+            "Unpaid orders older than %s: cancelled %s, skipped %s", age, cancelled, skipped
+        )
         self.stdout.write(
             # "Cancelled: 3" instead of "Cancelled 3 order(s)": no plural forms needed
             self.style.SUCCESS(

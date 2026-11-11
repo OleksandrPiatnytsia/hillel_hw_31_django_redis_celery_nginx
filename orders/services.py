@@ -17,7 +17,7 @@ from inventory.models import Stock, Warehouse
 from inventory.services import return_to_stock
 
 from .models import Order, OrderItem
-from .tasks import send_order_created_email_task
+from .tasks import send_order_cancelled_email_task, send_order_created_email_task
 
 
 class OrderError(Exception):
@@ -160,7 +160,7 @@ def create_order(user, quantities, *, full_name, phone, address, idempotency_key
     return order
 
 
-def cancel_order(order_id, *, user=None, only_unpaid=False):
+def cancel_order(order_id, *, user=None, only_unpaid=False, notify_customer=False):
     """Cancel an order and return its books to the stock.
 
     user=None: a manager (admin) or a command — any not cancelled order.
@@ -169,6 +169,11 @@ def cancel_order(order_id, *, user=None, only_unpaid=False):
     only_unpaid=True: the cancel_unpaid_orders command — only a "new" order
     with no payment, checked under the lock: a payment may arrive between
     the command's SELECT and this call.
+    notify_customer=True: the customer gets the email "order cancelled"
+    (after COMMIT, a Celery task). The cancel_unpaid_orders command: the
+    customer didn't cancel it and must learn why the books are gone. Not for
+    the customer's own "Cancel" button (they know) and not for a manager in
+    the admin (a manager talks to the customer anyway).
 
     Raises OrderError if the order can't be cancelled.
     """
@@ -212,5 +217,7 @@ def cancel_order(order_id, *, user=None, only_unpaid=False):
         from payments.services import close_open_payments
 
         transaction.on_commit(partial(close_open_payments, order.pk))
+        if notify_customer:
+            enqueue_on_commit(send_order_cancelled_email_task, order.pk)
 
     return order

@@ -1,0 +1,2 @@
+{# One line: emails.py strips the newline at the end of the file #}
+{% load i18n %}{% autoescape off %}{% blocktranslate %}Bookstore: {{ order }} is cancelled, it was not paid{% endblocktranslate %}{% endautoescape %}
