@@ -13,6 +13,10 @@ uvicorn==0.54.0
 uvicorn-worker==0.4.0
 stripe==16.1.0
 whitenoise==6.12.0
+# Background tasks: emails, the daily report, cleanup (config/celery.py);
+# [redis]: the Redis broker transport. Worker: celery -A config worker,
+# schedule: celery -A config beat (services celery / celery-beat)
+celery[redis]==5.7.0
 # REST API (app api/): serializers, ViewSets, routers, the browsable API
 djangorestframework==3.18.3
 # Filters in the API: ?category=..&price_min=.. (FilterSet classes)

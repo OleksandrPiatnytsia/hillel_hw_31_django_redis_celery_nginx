@@ -17,16 +17,18 @@ from .models import Order
 logger = logging.getLogger(__name__)  # "orders.emails"
 
 
-def send_order_email(order, template_prefix, extra_context=None):
+def send_order_email(order, template_prefix, extra_context=None, raise_errors=False):
     """Render <prefix>_subject.txt / .txt / .html and send them to the customer.
 
     Used for every email about an order: "order created" here, "payment
     received" in payments/emails.py. extra_context: more template variables.
 
-    Never raises: an email is a notification, the order is already saved.
-    A Gmail outage, a wrong App Password or a timeout must not turn a
-    successful checkout into an error page, so every problem is only logged
-    (with the traceback) for the developer.
+    raise_errors=False (default): never raises. An email is a notification,
+    the order is already saved: a Gmail outage, a wrong App Password or a
+    timeout must not turn a successful checkout into an error page, so
+    every problem is only logged (with the traceback) for the developer.
+    raise_errors=True: the Celery tasks (orders/tasks.py). The error is
+    logged AND raised again, so the task can retry the email later.
     """
     # The email is written in the RECIPIENT's language (User.language), not in
     # the language of the current request: it may be sent by a manager in the
@@ -34,10 +36,10 @@ def send_order_email(order, template_prefix, extra_context=None):
     # override(): this language only inside the "with" block, then the
     # previous one comes back (the manager's admin stays in their language).
     with translation.override(order.user.language):
-        return _send(order, template_prefix, extra_context)
+        return _send(order, template_prefix, extra_context, raise_errors)
 
 
-def _send(order, template_prefix, extra_context):
+def _send(order, template_prefix, extra_context, raise_errors):
     context = {
         "order": order,
         "user": order.user,
@@ -68,13 +70,15 @@ def _send(order, template_prefix, extra_context):
         logger.exception(
             "Email %s for order #%s to %s failed", template_prefix, order.pk, order.user.email
         )
+        if raise_errors:
+            raise
         return False
 
     logger.info("Email %s for order #%s sent to %s", template_prefix, order.pk, order.user.email)
     return True
 
 
-def send_order_created_email(order_id):
+def send_order_created_email(order_id, raise_errors=False):
     """ "Order #N is created": items, total, delivery data, link to the order.
 
     Takes the id, not the object: it is called after COMMIT
@@ -85,4 +89,4 @@ def send_order_created_email(order_id):
         .prefetch_related("items")
         .get(pk=order_id)
     )
-    return send_order_email(order, "orders/emails/order_created")
+    return send_order_email(order, "orders/emails/order_created", raise_errors=raise_errors)

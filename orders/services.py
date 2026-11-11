@@ -12,11 +12,12 @@ from django.utils.translation import gettext as _
 from django.utils.translation import ngettext
 
 from books.models import Book
+from config.celery import enqueue_on_commit
 from inventory.models import Stock, Warehouse
 from inventory.services import return_to_stock
 
-from .emails import send_order_created_email
 from .models import Order, OrderItem
+from .tasks import send_order_created_email_task
 
 
 class OrderError(Exception):
@@ -146,13 +147,15 @@ def create_order(user, quantities, *, full_name, phone, address, idempotency_key
         order.total = total
         order.save(update_fields=["total", "updated_at"])
 
-        # The email is sent only AFTER COMMIT. Sent right here, inside the
-        # transaction, it could promise an order that is then rolled back
-        # (an error later in this block, a failed COMMIT). on_commit() keeps
+        # The email is queued only AFTER COMMIT. Queued right here, inside
+        # the transaction, it could promise an order that is then rolled back
+        # (an error later in this block, a failed COMMIT), or the worker could
+        # take it before the COMMIT and not find the order. on_commit() keeps
         # the function and calls it when the outermost atomic() commits;
         # after a rollback it is simply dropped.
-        # partial(f, order.pk): a function with the id already bound to it
-        transaction.on_commit(partial(send_order_created_email, order.pk))
+        # A Celery task (worker "celery"): the checkout doesn't wait for
+        # Gmail, and a failed email is retried (orders/tasks.py)
+        enqueue_on_commit(send_order_created_email_task, order.pk)
 
     return order
 

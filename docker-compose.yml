@@ -1,10 +1,12 @@
 # Local Docker setup: Django (web) + PostgreSQL (db) + Redis (redis)
+# + Celery worker (celery) and scheduler (celery-beat)
 # + Stripe CLI (stripe-cli), which forwards Stripe webhooks to web.
 #
 #   docker compose up --build -d   build the web image and start everything
 #   docker compose ps              state and health of the services
 #   docker compose logs -f web     follow the Django / gunicorn output
 #   docker compose logs -f stripe-cli   events from Stripe and web's answers
+#   docker compose logs -f celery celery-beat   background tasks and the schedule
 #   docker compose down            stop and remove the containers (volumes stay)
 #   docker compose down -v         ... and delete static_data (the shared
 #                                  database and covers stay: external)
@@ -14,6 +16,31 @@
 #
 # The services find each other by service name: inside the Docker network
 # "db" and "redis" are host names (Docker's built-in DNS).
+
+# The part shared by web, celery and celery-beat: one image (the same code),
+# the same settings. "x-" = an extension field, ignored by compose itself;
+# "&django" names it, "<<: *django" below copies its keys into a service.
+x-django: &django
+  # Image from the Dockerfile in this folder. One name for the three
+  # services: built once, the others reuse it.
+  build: .
+  image: hillel-bookstore-django
+  # All variables from .env go into the container (DJANGO_SECRET_KEY,
+  # DJANGO_DEBUG, POSTGRES_*, ...). The .env file itself is not in the
+  # image (.dockerignore).
+  env_file: .env
+  environment:
+    # "environment" wins over "env_file": in .env the hosts are
+    # "localhost" (for runserver on the Mac); inside the Docker network
+    # PostgreSQL and Redis are reached by service name.
+    POSTGRES_HOST: db
+    POSTGRES_PORT: "5432"
+    # Redis database 0: cache + sessions; database 1: the Celery queue
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    # + "web": the stripe-cli service sends webhooks to http://web:8000/...,
+    # so the Host header is "web"; any host not in ALLOWED_HOSTS gets 400
+    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS},web
 
 services:
   db:
@@ -77,22 +104,8 @@ services:
       start_period: 5s
 
   web:
-    # Image from the Dockerfile in this folder
-    build: .
-    # All variables from .env go into the container (DJANGO_SECRET_KEY,
-    # DJANGO_DEBUG, POSTGRES_*, ...). The .env file itself is not in the
-    # image (.dockerignore).
-    env_file: .env
-    environment:
-      # "environment" wins over "env_file": in .env the hosts are
-      # "localhost" (for runserver on the Mac); inside the Docker network
-      # PostgreSQL and Redis are reached by service name.
-      POSTGRES_HOST: db
-      POSTGRES_PORT: "5432"
-      REDIS_URL: redis://redis:6379/0
-      # + "web": the stripe-cli service sends webhooks to http://web:8000/...,
-      # so the Host header is "web"; any host not in ALLOWED_HOSTS gets 400
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS},web
+    # image, env_file, environment: from x-django above
+    <<: *django
     ports:
       # http://localhost:8000 on the Mac -> gunicorn in the container
       - "8000:8000"
@@ -124,6 +137,47 @@ services:
       # before it accepts connections, and migrate in docker-entrypoint.sh
       # would fail with "connection refused" (as in the stage 4 check).
       db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    # The worker: takes tasks from the queue (Redis db 1) and runs them:
+    # emails, the daily report, cleanup. The same image and settings as web.
+    <<: *django
+    #   -A config          the Celery app in config/celery.py
+    #   --concurrency=2    2 processes: 2 tasks at the same time
+    #   --loglevel=info    "Task ... received / succeeded in 0.3s"
+    command: ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=2"]
+    healthcheck:
+      # "Are you alive?" to this worker over the broker; it answers "pong".
+      # $$HOSTNAME: the container's host name, read inside the container;
+      # the worker's name is celery@<hostname>.
+      test: ["CMD-SHELL", "celery -A config inspect ping --destination celery@$$HOSTNAME --timeout 5"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      # web healthy = migrations are applied (docker-entrypoint.sh): a task
+      # never meets a database without the new tables
+      web:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    # The scheduler: at the times of CELERY_BEAT_SCHEDULE (settings.py) it
+    # puts the periodic tasks into the queue; the worker runs them.
+    # Exactly ONE beat: two would put every periodic task in twice.
+    <<: *django
+    # --schedule: beat keeps the time of the last runs in a small file.
+    # /app belongs to root (the "app" user can't write there), /tmp can;
+    # the file is lost with the container, beat then just starts counting
+    # from now (a missed run is not repeated).
+    command: ["celery", "-A", "config", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      web:
         condition: service_healthy
       redis:
         condition: service_healthy

@@ -16,6 +16,7 @@ from datetime import timedelta
 from importlib.util import find_spec
 from pathlib import Path
 
+from celery.schedules import crontab
 from corsheaders.defaults import default_headers
 from django.utils.translation import gettext_lazy as _
 from dotenv import load_dotenv
@@ -235,6 +236,62 @@ API_CACHE_TIMEOUT = int(os.getenv("API_CACHE_TIMEOUT", 10 * 60))  # 10 minutes
 SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 
 
+# Celery: background tasks (config/celery.py, <app>/tasks.py)
+# https://docs.celeryq.dev/en/stable/django/first-steps-with-django.html
+#
+# Every CELERY_* setting here is a Celery setting without the prefix
+# (config_from_object(..., namespace="CELERY")): CELERY_BROKER_URL -> broker_url.
+#
+# The broker is the queue of tasks: the site puts a message "send the email
+# of order 5" there, a worker process (service "celery") takes it and runs
+# the task. Redis database 1: the cache and sessions are in database 0,
+# a FLUSHDB of one never touches the other.
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
+# No result backend: nobody waits for a return value (emails, reports,
+# cleanup); the outcome of every task is in the log
+CELERY_TASK_IGNORE_RESULT = True
+# CELERY_TIMEZONE: next to TIME_ZONE below
+# Celery 5.x warns at start without it: keep trying to connect to Redis
+# while the worker starts (Redis may start a second later than the worker)
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+# A message is removed from the queue only AFTER the task has finished: a
+# worker killed in the middle (docker compose restart) doesn't lose it,
+# another worker runs it again. Our tasks are safe to run twice.
+CELERY_TASK_ACKS_LATE = True
+# One task at a time per worker process: long tasks (the report) don't
+# hold a pile of reserved messages that other processes could run
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# A task that runs longer is stopped (a hung SMTP server, a huge report):
+# soft -> SoftTimeLimitExceeded inside the task, hard -> the process is killed
+CELERY_TASK_SOFT_TIME_LIMIT = 5 * 60
+CELERY_TASK_TIME_LIMIT = 6 * 60
+
+# Celery Beat: the schedule of periodic tasks (service "celery-beat").
+# Beat only PUTS the tasks into the queue at these moments; the worker runs
+# them. Kept here, in code (not django-celery-beat in the admin): the
+# schedule is reviewed in git like the rest of the code.
+# crontab(minute=0) = every hour at :00; crontab(hour=3, minute=0) = 03:00.
+CELERY_BEAT_SCHEDULE = {
+    # Orders unpaid for more than ORDER_UNPAID_MAX_AGE_HOURS: books back to stock
+    "cancel-unpaid-orders": {
+        "task": "orders.tasks.cancel_unpaid_orders",
+        "schedule": crontab(minute=0),
+    },
+    # Expired sessions out of the django_session table
+    "clear-expired-sessions": {
+        "task": "users.tasks.clear_expired_sessions",
+        "schedule": crontab(hour=3, minute=0),
+    },
+    # Yesterday's sales, top books, low stock -> email to "Managers"
+    "daily-sales-report": {
+        "task": "orders.tasks.send_daily_report",
+        "schedule": crontab(hour=6, minute=0),
+    },
+}
+# Age of an unpaid order for the hourly cancel_unpaid_orders task
+ORDER_UNPAID_MAX_AGE_HOURS = int(os.getenv("ORDER_UNPAID_MAX_AGE_HOURS", 24))
+
+
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
 
@@ -288,6 +345,9 @@ LOCALE_PATHS = [BASE_DIR / "locale"]
 LANGUAGE_COOKIE_AGE = 365 * 24 * 60 * 60
 
 TIME_ZONE = "UTC"
+# Celery uses the same clock: the crontab hours of CELERY_BEAT_SCHEDULE
+# and "yesterday" of the daily report are UTC, like every date of the site
+CELERY_TIMEZONE = TIME_ZONE
 
 USE_I18N = True
 
@@ -609,6 +669,12 @@ LOGGING = {
         },
         # config.middleware.RequestTimingMiddleware: one line per request
         "config": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Celery itself: "Task ... received / succeeded / retry", worker start
+        "celery": {
             "handlers": ["console", "file"],
             "level": "INFO",
             "propagate": False,

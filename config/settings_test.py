@@ -62,3 +62,11 @@ for logger_config in LOGGING["loggers"].values():
 from .settings import DATABASES  # noqa: E402
 
 DATABASES["default"]["OPTIONS"].pop("pool", None)
+
+# Celery in the tests: no broker, no worker. task.delay() runs the task
+# right here, synchronously (with its retries, without the pauses), so the
+# tests see the email in mail.outbox at once. EAGER_PROPAGATES=False: a
+# task that fails after its retries doesn't raise in the test, as a failed
+# background task never reaches the user.
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = False
