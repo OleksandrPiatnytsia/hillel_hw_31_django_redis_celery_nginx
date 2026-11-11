@@ -157,6 +157,30 @@ def test_cancel_unpaid_orders_logs_every_run_even_with_nothing_to_cancel(caplog)
 
 
 # Generated with AI
+def test_order_paid_while_the_command_runs_is_skipped(customer, monkeypatch, mailoutbox, caplog):
+    """The payment comes between the SELECT of old orders and the cancel."""
+    from orders.management.commands import cancel_unpaid_orders as command
+
+    order = create_order(customer, {BookFactory(stock=5).pk: 1}, **DELIVERY)
+    Order.objects.filter(pk=order.pk).update(created_at=timezone.now() - timedelta(hours=25))
+    real_cancel_order = command.cancel_order
+
+    def paid_just_now(order_id, **kwargs):
+        Order.objects.filter(pk=order_id).update(payment_status=Order.PaymentStatus.PAID)
+        return real_cancel_order(order_id, **kwargs)
+
+    monkeypatch.setattr(command, "cancel_order", paid_just_now)
+
+    with caplog.at_level(logging.INFO, logger="orders"):
+        cancel_unpaid_orders.delay()
+
+    order.refresh_from_db()
+    assert order.status == Order.Status.NEW  # the payment wins
+    assert "cancelled 0, skipped 1" in caplog.text
+    assert mailoutbox == []
+
+
+# Generated with AI
 def test_customer_cancelling_own_order_gets_no_cancellation_email(
     customer, mailoutbox, django_capture_on_commit_callbacks
 ):

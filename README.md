@@ -1,24 +1,28 @@
-# hillel_hw_28 — Django REST Framework
+# hillel_hw_31 — Redis, Celery, nginx
 
-Навчальний Django-проєкт (Hillel). Продовження ДЗ №25 (книгарня: кошик, замовлення,
-Stripe, дві мови, async view, тести). У цьому ДЗ — **REST API** для каталогу й
-замовлень (див. «REST API»):
+Навчальний Django-проєкт (Hillel). Продовження ДЗ №28 (книгарня з REST API).
+У цьому ДЗ:
 
-- ViewSets і router: книги, автори, категорії, замовлення; вкладені серіалізатори;
-- JWT (`/api/token/`, `refresh/`, `verify/`) і сесія сайту;
-- права: `IsAuthenticated`, `IsAdminUser`, права груп (`DjangoModelPermissions`),
-  власний `IsOwnerOrReadOnly`;
-- пагінація по 20, фільтри django-filter, пошук і сортування, throttling;
-- документація Swagger / ReDoc (`/api/docs/`), CORS для `/api/`;
-- `Idempotency-Key` для створення замовлень: повторений запит не створює друге замовлення;
-- 76 тестів API з `APIClient`; покриття `api/` — 100%, усього — 97.42%
-  ([`COVERAGE.md`](COVERAGE.md)).
+- **склад** — окремий застосунок `inventory`: таблиці `Warehouse` і `Stock` замість
+  поля `Book.stock`, тож дані книги більше не змінюються з кожною покупкою (див. «Склад»);
+- **кеш у Redis**: об'єкт книги, фрагменти шаблонів, відповіді API авторів і
+  категорій; очищення через сигнали (див. «Кешування»);
+- **Celery + Celery Beat** (брокер — Redis): листи у фоні з повторними спробами,
+  щоденний CSV-звіт менеджерам, очищення сесій, скасування неоплачених замовлень
+  за розкладом з листом покупцю (див. «Celery»); **Flower** — панель задач;
+- **nginx** перед gunicorn: static і media з volumes, `DEBUG=False` у Docker,
+  справжня IP-адреса клієнта (див. «nginx»);
+- **Sentry**: помилки сайту й задач без персональних даних (див. «Sentry»);
+- блок «Інструменти» в профілі суперкористувача: адмінка, документація API, Flower, Sentry, Stripe;
+- 362 тести, покриття 98.36%, код цього ДЗ — 100% ([`COVERAGE.md`](COVERAGE.md)).
 
 ## Стек
 
 - Python 3.13, Django 6.1
 - PostgreSQL 17 (`psycopg` 3), Redis 8 (вбудований у Django `RedisCache`)
-- Docker, docker compose; gunicorn + uvicorn (ASGI); WhiteNoise (статика без nginx)
+- Docker, docker compose; gunicorn + uvicorn (ASGI); nginx 1.30 (static, media, проксі)
+- Celery 5.7 (брокер Redis), Celery Beat (розклад у `settings.py`), Flower 2.2
+- Sentry (`sentry-sdk` 2.74): інтеграції Django, Celery, logging
 - `psycopg-pool`: пул з'єднань з базою
 - gettext (`makemessages` / `compilemessages`), Django i18n
 - Django REST Framework 3.18: djangorestframework-simplejwt (JWT), django-filter,
@@ -136,7 +140,7 @@ ViewSets і права працюють з моделями `books` і `orders` 
 | `POST /api/token/verify/` | усі | чи дійсний токен (200 / 401) |
 | `GET /api/books/`, `/api/books/<id>/` | усі | книги з вкладеними автором і категоріями |
 | `POST /api/books/` | `books.add_book` (Editors, Managers) | нова книга |
-| `PUT`, `PATCH /api/books/<id>/` | `books.change_book` | змінити книгу; `stock` — лише з `books.manage_stock` |
+| `PUT`, `PATCH /api/books/<id>/` | `books.change_book` | змінити книгу; `stock` — лише з `inventory.change_stock` |
 | `DELETE /api/books/<id>/` | `books.delete_book` (Managers) | видалити; книга в замовленнях → 409 |
 | `GET /api/authors/[<id>/]`, `/api/categories/[<id>/]` | усі | автори й категорії з `books_count` |
 | `POST`, `PUT`, `PATCH`, `DELETE` авторів і категорій | `IsAdminUser` (`is_staff`) **і** право моделі | як в адмінці; є книги → 409 на `DELETE` |
@@ -217,7 +221,7 @@ class OrderViewSet(...):
   `is_staff` відчиняє двері, група вирішує, що можна (Managers видаляють категорію,
   редактор має `add_author`, але не `is_staff`). `get_permissions()` замість
   `permission_classes`, бо читання відкрите всім, а `IsAdminUser` не має варіанта «або лише читання».
-- **Залишок (`stock`)** — як у `BookForm`: без `books.manage_stock` змінити його
+- **Залишок (`stock`)** — як у `BookForm`: без `inventory.change_stock` змінити його
   не можна (403). Надіслати *поточне* значення можна: клієнт, що робить `PUT`
   з усіма прочитаними полями, не отримає помилку.
 - Анонім на запис отримує **401** (з токеном запит міг би пройти), залогінений
@@ -374,13 +378,15 @@ CORS_URLS_REGEX = r"^/api/.*$"
 
 ```
 config/
-├── settings.py              # PostgreSQL, Redis, WhiteNoise, AUTH_USER_MODEL, Debug Toolbar, LOGGING
+├── settings.py              # PostgreSQL, Redis, кеш, Celery і розклад Beat, Sentry, LOGGING
 ├── settings_test.py         # налаштування для pytest: швидкий хеш паролів, LocMemCache, без пулу
-├── urls.py                  # admin + books + accounts/ + cart/ + orders/ + payments/ + api/ + health/ + i18n/
+├── urls.py                  # admin + books + accounts/ + cart/ + orders/ + payments/ + api/ + health/ + sentry-debug/ + i18n/
+├── celery.py                # Celery-застосунок, enqueue_on_commit() (задача після COMMIT)
+├── sentry.py                # init_sentry(): що відправляється в Sentry, а що ні
 ├── asgi.py                  # ASGI-застосунок (Docker: gunicorn + uvicorn)
-├── views.py                 # health (async), set_language
+├── views.py                 # health (async), set_language, sentry_debug
 ├── i18n.py                  # is_supported_language(), set_language_cookie()
-├── middleware.py            # RequestTimingMiddleware, AsyncWhiteNoiseMiddleware (sync + async)
+├── middleware.py            # RequestTimingMiddleware (sync + async)
 └── logging_filters.py       # HideClientErrorTraceback (403/404 без traceback)
 users/
 ├── models.py                # User(AbstractUser): email lowercase і унікальний; phone, address
@@ -390,6 +396,8 @@ users/
 ├── urls.py                  # app_name = "users"
 ├── admin.py                 # UserAdmin з email на сторінці «Add user»
 ├── signals.py               # логування входу, виходу й невдалих спроб
+├── tasks.py                 # clear_expired_sessions (Celery Beat)
+├── tools.py                 # admin_tools(): блок «Інструменти» профілю
 ├── apps.py                  # підключення сигналів у ready()
 ├── migrations/
 │   ├── 0001_initial.py
@@ -406,7 +414,9 @@ books/
 ├── forms.py                 # BookForm, BookFilterForm, CoverInput
 ├── views.py                 # Class-Based Views для книг і авторів, book_search (async)
 ├── urls.py                  # app_name = "books"
-├── admin.py                 # адмінка (+ мініатюри обкладинок)
+├── admin.py                 # адмінка (+ мініатюри обкладинок, StockInline)
+├── cache.py                 # get_cached_book(), invalidate_books(): кеш книги й фрагментів
+├── signals.py               # зміна книги, автора, категорії -> очищення кешу
 ├── templates/books/
 │   ├── book_list.html
 │   ├── book_detail.html
@@ -419,6 +429,12 @@ books/
 └── management/commands/
     ├── seed_books.py
     └── book_stats.py
+inventory/                   # склад, див. «Склад»
+├── models.py                # Warehouse, Stock
+├── services.py              # set_stock(), return_to_stock()
+├── signals.py               # нова книга -> рядок Stock з 0
+├── admin.py                 # склади, залишки (list_editable)
+└── migrations/              # 0002: Book.stock -> Stock; 0003: право inventory.change_stock
 cart/
 ├── cart.py                  # Cart: кошик у сесії
 ├── forms.py                 # CartAddForm (quantity, override)
@@ -431,6 +447,8 @@ orders/
 ├── forms.py                 # CheckoutForm
 ├── views.py                 # checkout, OrderListView, order_detail, order_cancel, order_status (async)
 ├── emails.py                # send_order_email(): лист мовою отримувача
+├── tasks.py                 # листи, cancel_unpaid_orders, send_daily_report (Celery)
+├── reports.py               # щоденний звіт: 3 CSV-файли менеджерам
 ├── admin.py                 # OrderAdmin: inline позицій і платежів, скасування
 ├── migrations/0002_managers_order_permissions.py   # права групи Managers
 ├── management/commands/cancel_unpaid_orders.py
@@ -445,13 +463,14 @@ payments/
 │   └── registry.py          # "stripe" / "manual" -> об'єкт провайдера
 ├── views.py                 # pay, payment_success, payment_cancelled, webhook
 ├── emails.py                # лист «payment received»
+├── tasks.py                 # той самий лист як задача Celery
 ├── admin.py                 # inline для замовлення, список платежів
 └── templates/payments/      # payment_success, emails/
 api/                         # REST API (без моделей), див. «REST API»
 ├── urls.py                  # router + токени + документація, namespace "api"
 ├── views/
 │   ├── auth.py              # токени з throttling, публічний корінь /api/
-│   ├── catalog.py           # BookViewSet, AuthorViewSet, CategoryViewSet (+ лог, 409, StaffWriteMixin)
+│   ├── catalog.py           # BookViewSet, AuthorViewSet, CategoryViewSet (+ лог, 409, StaffWriteMixin, кеш)
 │   └── orders.py            # OrderViewSet: list, retrieve, create, cancel
 ├── serializers/
 │   ├── catalog.py           # вкладені автор і категорії, author_id / category_ids, stock
@@ -459,11 +478,14 @@ api/                         # REST API (без моделей), див. «REST 
 ├── permissions.py           # IsOwnerOrReadOnly
 ├── filters.py               # BookFilter, StableOrderingFilter
 ├── exceptions.py            # Conflict (409)
+├── cache.py                 # cache_api_response: cache_page з номером покоління
+├── signals.py               # зміна каталогу -> нове покоління кешу API
 └── docs.py                  # описи для Swagger (extend_schema), хук схеми
 templates/                   # спільні шаблони проєкту
 ├── base.html
 ├── 403.html                 # «Access denied»
 ├── 404.html                 # «Page not found» (лише при DEBUG=False)
+├── 500.html                 # «Server error»: окремий, без base.html
 └── includes/
     ├── navbar.html
     ├── messages.html
@@ -486,10 +508,11 @@ requirements-dev.txt         # + django-debug-toolbar і пакети для т�
 tests/                       # див. «Тести»
 pytest.ini                   # налаштування pytest, звіти покриття, мінімум 70%
 .coveragerc                  # що рахується в покритті
+nginx/default.conf           # nginx: /static/, /media/ з volumes, решта -> gunicorn
 Dockerfile                   # образ web: python:3.13-slim, користувач app, gunicorn + uvicorn
 .dockerignore                # що не потрапляє в образ (.env, .venv, бази, media)
-docker-entrypoint.sh         # migrate + collectstatic, потім exec команди
-docker-compose.yml           # web + db + redis + stripe-cli, volumes, healthchecks
+docker-entrypoint.sh         # migrate + collectstatic (не для celery), потім exec команди
+docker-compose.yml           # nginx + web + db + redis + celery + celery-beat + flower + stripe-cli
 .gitattributes               # *.sh завжди з LF
 ```
 
@@ -549,8 +572,8 @@ LOGOUT_REDIRECT_URL = "books:list"
 | Група | Права (застосунок `books`) | Що може |
 |---|---|---|
 | **Customers** | `view_book`, `view_author`, `view_category` | лише переглядати; дається кожному новому користувачу |
-| **Editors** | Customers + `add/change_book`, `add/change_author`, права на `bookcategory` | додавати й редагувати книжки й авторів |
-| **Managers** | Editors + `delete_book`, `delete_author`, `add/change/delete_category`, `manage_stock`; замовлення: `view/change_order`, `view_orderitem`, `view_payment`, `add_payment` | усе в каталозі; замовлення в адмінці: статус, доставка, скасування, ручні платежі |
+| **Editors** | Customers + `add/change_book`, `add/change_author`, права на `bookcategory`; склад: `view_warehouse`, `view_stock` | додавати й редагувати книжки й авторів, бачити залишки |
+| **Managers** | Editors + `delete_book`, `delete_author`, `add/change/delete_category`; склад: `view_warehouse`, `view_stock`, `add/change_stock` (`inventory.change_stock` — змінити кількість); замовлення: `view/change_order`, `view_orderitem`, `view_payment`, `add_payment` | усе в каталозі; замовлення в адмінці: статус, доставка, скасування, ручні платежі |
 
 Суперкористувач має всі права без груп. Додати користувача в групу:
 адмінка → Users → користувач → Groups.
@@ -581,18 +604,13 @@ Permissions зазвичай створює сигнал `post_migrate`, тоб�
 - **Шаблони:** `{% if perms.books.change_book %}` ховає кнопки Edit / Delete /
   Add book. Це лише зручність, справжній захист у views.
 
-### Власний permission `manage_stock`
+### Право `inventory.change_stock`
 
-```python
-class Book(models.Model):
-    class Meta:
-        permissions = [("manage_stock", "Can change stock quantity")]
-```
-
-`BookForm.__init__(user=...)` робить поле `stock` неактивним (`disabled`),
-якщо в користувача немає `books.manage_stock`. Для такого поля Django
-**ігнорує** значення з POST і бере початкове, тож змінити склад через
-DevTools не вийде. Редактор створює книжку з `stock = 0`, а склад виставляє менеджер.
+Кількість примірників змінює лише той, хто має `inventory.change_stock` (група
+Managers). `BookForm.__init__(user=...)` робить поле `stock` неактивним
+(`disabled`) для решти: для такого поля Django **ігнорує** значення з POST і
+бере початкове, тож змінити склад через DevTools не вийде. Редактор створює
+книжку з 0 примірників, склад виставляє менеджер. Детально — «Склад».
 
 ### Профіль
 
@@ -603,6 +621,20 @@ DevTools не вийде. Редактор створює книжку з `stock
 `/accounts/profile/edit/` (`ProfileEditView`): ім'я, прізвище, телефон, адреса.
 `get_object()` повертає `request.user`, `<pk>` в адресі немає, тому чужий профіль
 не відкриєш. Телефон перевіряє та сама `normalize_phone()`, що й при оформленні.
+
+Суперкористувач бачить у профілі ще блок **«Інструменти»** (`users/tools.py`) —
+усі службові сторінки в одному місці:
+
+| Група | Посилання |
+|---|---|
+| Site | адмінка, замовлення, залишки на складі |
+| API | browsable API `/api/`, Swagger, ReDoc, схема OpenAPI |
+| Monitoring | `/health/`, Flower ↗, Sentry ↗ (якщо задано `SENTRY_ISSUES_URL`), тестова помилка `/sentry-debug/` |
+| Payments | кабінет Stripe ↗ (тестовий або робочий — за ключем) |
+
+Внутрішні адреси будуються через `reverse()`, зовнішні беруться з налаштувань;
+не налаштований сервіс не показується. Іншим користувачам блок не видно:
+Flower уміє зупиняти задачі, а `/sentry-debug/` — лише для суперкористувача.
 
 ## Django Debug Toolbar
 
@@ -751,20 +783,21 @@ INFO config.middleware GET /create/ 403 3.6ms user=ann
 
 | | Static | Media |
 |---|---|---|
-| Що це | CSS, іконки, заглушка обкладинки | обкладинки, завантажені через форму |
+| Що це | CSS, JS, іконки, заглушка обкладинки | обкладинки, завантажені через форму |
 | Де лежить | `static/` (у git) | `media/covers/<рік>/<місяць>/` (не в git) |
 | Налаштування | `STATIC_URL`, `STATICFILES_DIRS`, `STATIC_ROOT` | `MEDIA_URL`, `MEDIA_ROOT` |
-| Хто роздає локально | `runserver` сам | `static()` у `config/urls.py` (тільки при `DEBUG=True`) |
-| Хто роздає в Docker | WhiteNoise з `STATIC_ROOT` (volume `static_data`) | `static()`, тому в Docker `DJANGO_DEBUG=True` |
+| Хто роздає локально (`runserver`, `DEBUG=True`) | `runserver` сам | `static()` у `config/urls.py` |
+| Хто роздає в Docker (`DEBUG=False`) | nginx з volume `static_data` | nginx з volume `hillel_bookstore_media_data` |
 
 - У шаблонах статика підключається через `{% load static %}` і `{% static '...' %}`.
-- `collectstatic` запускає `docker-entrypoint.sh` при кожному старті контейнера.
-  `CompressedStaticFilesStorage` (WhiteNoise) додатково створює стиснені `.gz` і `.br` копії.
-  Не `CompressedManifestStaticFilesStorage`: при `DEBUG=False` (а `manage.py test`
-  завжди працює з ним) він вимагає вже зібраний manifest, і тести з `{% static %}` падали б.
-- WhiteNoise роздає лише статику, яка була на диску при старті, а не завантажені
-  файли. Тому обкладинки в Docker роздає Django при `DEBUG=True`. Правильне
-  рішення для продакшну — nginx (окрема задача).
+- `collectstatic` запускає `docker-entrypoint.sh` при кожному старті `web`.
+- `ManifestStaticFilesStorage`: `collectstatic` записує кожен файл ще й з хешем
+  вмісту в імені (`styles.css` → `styles.5a5d728b941a.css`), а `{% static %}`
+  дає саме це ім'я. Змінений файл = нове ім'я, тому nginx дозволяє браузеру
+  тримати статику рік (`Cache-Control: immutable`), і після оновлення ніхто
+  не бачить старий CSS. Тести працюють зі звичайним `StaticFilesStorage`
+  (`config/settings_test.py`): вони йдуть з `DEBUG=False` без `collectstatic`.
+- Подробиці — у розділі «nginx».
 
 ### Обкладинки книг
 
@@ -1173,7 +1206,7 @@ gunicorn (керує процесами, перезапускає впалі)
 
 ```dockerfile
 CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn_worker.UvicornWorker",
-     "--bind", "0.0.0.0:8000", "--workers", "3", "--no-control-socket"]
+     "--bind", "0.0.0.0:8000", "--workers", "3", "--forwarded-allow-ips=*", "--no-control-socket"]
 ```
 
 - **Async view** виконуються прямо в event loop; поки view чекає на базу, воркер
@@ -1182,9 +1215,8 @@ CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn_worker.UvicornWorker"
 - **Middleware для обох режимів.** Якщо хоч один middleware лише синхронний,
   Django під ASGI запускає його й усе нижче в потоці на кожен запит, і
   асинхронність втрачається. Тому `RequestTimingMiddleware` має `__call__` і
-  `__acall__` (`sync_capable = async_capable = True`). WhiteNoise 6.12 лише
-  синхронний, тому `AsyncWhiteNoiseMiddleware` (підклас у `config/middleware.py`)
-  додає async-шлях і читає файли частинами в потоці, а не цілком у пам'ять.
+  `__acall__` (`sync_capable = async_capable = True`). Статику під ASGI Django
+  не роздає зовсім: її віддає nginx (див. «nginx»).
 - **Пул з'єднань** замість `CONN_MAX_AGE`:
   ```python
   "CONN_MAX_AGE": 0,
@@ -1210,12 +1242,12 @@ open htmlcov/index.html               # непокриті рядки підсв
 
 | | Кількість | Що перевіряють |
 |---|---|---|
-| `tests/unit/` | 151 | одна функція, модель, форма або один запит |
-| `tests/integration/` | 55 | сценарії з кількох кроків: кошик → замовлення → Stripe → webhook → лист |
-| `tests/api/` | 76 | REST API через `APIClient`: токени, права кожної ролі, фільтри, замовлення, CORS, throttling |
+| `tests/unit/` | 194 | одна функція, модель, форма або один запит; склад, задачі Celery, Sentry |
+| `tests/integration/` | 76 | сценарії з кількох кроків: кошик → замовлення → Stripe → webhook → лист; кеш |
+| `tests/api/` | 85 | REST API через `APIClient`: токени, права кожної ролі, фільтри, замовлення, CORS, throttling, кеш |
 | `tests/test_setup.py` | 7 | сама інфраструктура: налаштування, фабрики, фейки |
 
-Покриття **97.42%** (таблиця по файлах — [`COVERAGE.md`](COVERAGE.md)); `--cov-fail-under=70` у `pytest.ini`: якщо покриття впаде
+Покриття **98.36%** (таблиця по файлах — [`COVERAGE.md`](COVERAGE.md)); `--cov-fail-under=70` у `pytest.ini`: якщо покриття впаде
 нижче 70%, `pytest` завершиться з помилкою.
 
 ### Структура
@@ -1232,10 +1264,15 @@ tests/
 │   ├── test_language.py           # перемикач мови, User.language
 │   ├── test_async_views.py        # async view через AsyncClient
 │   ├── test_payment_services.py   # відмови й помилки оплат
+│   ├── test_inventory.py          # Warehouse / Stock, with_stock(), права складу
+│   ├── test_tasks.py              # задачі Celery: повтори листів, розклад, звіт, скасування
+│   ├── test_sentry.py             # що йде в Sentry (через справжній ASGI-застосунок)
+│   ├── test_deploy.py             # підроблений X-Forwarded-For, сторінка 500
 │   └── test_translation_catalog.py  # .po повний, .mo скомпільований
 ├── api/
 │   ├── conftest.py                # api_client, get_tokens(user), as_user(user), editor
 │   ├── test_setup.py              # JWT, ліміт /api/token/, документація, CORS
+│   ├── test_cache.py              # кеш авторів і категорій, нове покоління після змін
 │   ├── test_catalog.py            # книги, автори, категорії: права, фільтри, 409, мова помилок
 │   └── test_orders.py             # свої / чужі замовлення, створення, скасування, 405, Idempotency-Key (і гонка двох потоків)
 └── integration/
@@ -1243,6 +1280,7 @@ tests/
     ├── test_payment_flow.py       # Stripe: сторінка, повернення, webhook, один лист
     ├── test_admin_and_commands.py # адмінка менеджера, management-команди
     ├── test_book_management.py    # менеджер і редактор: права на книги
+    ├── test_cache.py              # кеш книги й фрагментів, очищення сигналами, логи
     ├── test_language_flow.py, test_translations.py  # сайт і листи двома мовами
     └── test_async_flow.py         # опитування статусу до і після webhook
 ```
@@ -1259,7 +1297,9 @@ tests/
   йдуть. Листи після COMMIT — через `django_capture_on_commit_callbacks(execute=True)`.
   `failing_mailer` імітує падіння SMTP: замовлення має зберегтися.
 - **Налаштування тестів** (`config/settings_test.py`): MD5-хеш паролів (швидко),
-  `LocMemCache` замість Redis, фейкові ключі Stripe, без пулу з'єднань і без запису в `logs/app.log`.
+  `LocMemCache` замість Redis, фейкові ключі Stripe, без пулу з'єднань і без запису в `logs/app.log`,
+  `CELERY_TASK_ALWAYS_EAGER=True` (задача виконується одразу, разом з повторними спробами, без брокера),
+  Sentry не запускається.
 
 ### Async-тести
 
@@ -1300,39 +1340,55 @@ docker volume create hillel_bookstore_postgres_data && docker volume create hill
 
 docker compose run --rm --no-deps stripe-cli listen --print-secret   # whsec_... -> STRIPE_WEBHOOK_SECRET у .env
 docker compose up --build -d                                   # зібрати образ і запустити
-docker compose ps                                              # db, redis, web healthy; stripe-cli running
+docker compose ps                                              # db, redis, web, nginx, celery, flower healthy
 docker compose exec web python manage.py createsuperuser
 docker compose exec web python manage.py seed_books            # якщо база порожня
 ```
 
-- Сайт: http://localhost:8000/
+- Сайт: http://localhost:8000/ (nginx → gunicorn)
 - Адмінка: http://localhost:8000/admin/
 - API: http://localhost:8000/api/, документація: http://localhost:8000/api/docs/
 - Стан: http://localhost:8000/health/
-- Лог: `docker compose logs -f web`, події Stripe: `docker compose logs -f stripe-cli`
+- Flower: http://localhost:5555/ (логін і пароль з `FLOWER_BASIC_AUTH`)
+- Логи: `docker compose logs -f web celery`, запити: `docker compose logs -f nginx`,
+  події Stripe: `docker compose logs -f stripe-cli`
 
 ```
 docker compose up
-  ├─ db          postgres:17-alpine  ──┐ healthcheck: pg_isready
-  ├─ redis       redis:8-alpine      ──┤ healthcheck: redis-cli ping
-  │                                    ▼ обидва healthy (depends_on: condition: service_healthy)
-  ├─ web         Dockerfile → docker-entrypoint.sh → migrate → collectstatic → exec gunicorn (uvicorn workers)
-  │                                    healthcheck: GET /health/
-  │                                    ▼ healthy
-  └─ stripe-cli  stripe listen --forward-to web:8000/payments/webhook/stripe/
+  ├─ db           postgres:17-alpine  ──┐ healthcheck: pg_isready
+  ├─ redis        redis:8-alpine      ──┤ healthcheck: redis-cli ping
+  │                                     ▼ обидва healthy
+  ├─ web          docker-entrypoint.sh → migrate → collectstatic → exec gunicorn (uvicorn workers)
+  │                                     healthcheck: GET /health/
+  │                                     ▼ healthy (міграції застосовано, статика зібрана)
+  ├─ nginx        :8000 → /static/, /media/ з volumes; решта → web:8000
+  ├─ celery       celery worker (2 процеси): листи, звіт, скасування
+  │                                     ▼ healthy (celery inspect ping)
+  ├─ flower       :5555 → панель задач
+  ├─ celery-beat  celery beat: кладе періодичні задачі в чергу за розкладом
+  └─ stripe-cli   stripe listen --forward-to nginx/payments/webhook/stripe/ (після nginx healthy)
 ```
 
 | Сервіс | Порт на Mac | Volume | Healthcheck |
 |---|---|---|---|
 | `db` | 5432 | `hillel_bookstore_postgres_data` (спільний) → `/var/lib/postgresql/data` | `pg_isready` |
 | `redis` | 6379 | немає (кеш можна втратити, сесії є і в PostgreSQL) | `redis-cli ping` |
-| `web` | 8000 | `static_data` → `/app/staticfiles`, `hillel_bookstore_media_data` (спільний) → `/app/media` | `GET /health/` (Python `urllib`, у slim-образі немає curl) |
+| `web` | немає, лише в мережі Docker (`expose: 8000`) | `static_data` → `/app/staticfiles`, `hillel_bookstore_media_data` (спільний) → `/app/media` | `GET /health/` (Python `urllib`, у slim-образі немає curl) |
+| `nginx` | 8000 → 80 | ті самі `static_data` і media, лише читання (`:ro`) | `wget /health/` крізь nginx до Django |
+| `celery` | немає | немає | `celery inspect ping` |
+| `celery-beat` | немає | немає (файл розкладу в `/tmp`) | немає |
+| `flower` | `127.0.0.1:5555` (лише цей Mac) | немає | `GET /healthcheck` |
 | `stripe-cli` | немає | немає | немає: від нього ніхто не залежить, стан видно в `logs` |
+
+`web`, `celery`, `celery-beat` і `flower` — один образ `hillel-bookstore-django`
+з однаковими налаштуваннями (якір `x-django` у `docker-compose.yml`), різні лише команди.
 
 Корисні команди:
 
 ```bash
 docker compose logs -f web                         # вивід Django / gunicorn
+docker compose logs -f celery celery-beat          # задачі: received / succeeded / retry; розклад
+docker compose logs -f nginx                       # кожен запит (access log) і помилки nginx
 docker compose exec web python manage.py shell     # команда в запущеному контейнері
 docker compose restart web                         # перезапуск (entrypoint знову зробить migrate)
 docker compose down                                # зупинити й видалити контейнери, volumes лишаються
@@ -1343,6 +1399,8 @@ docker compose exec web python manage.py cancel_unpaid_orders --dry-run
 **Що варто знати:**
 
 - `docker-entrypoint.sh` має `set -e`: якщо `migrate` впаде, gunicorn не стартує.
+  Для `celery ...` (worker, beat, flower) він пропускає `migrate` і `collectstatic`:
+  їх робить лише `web`, решта чекає, поки `web` стане healthy.
   `exec "$@"` робить gunicorn процесом PID 1, тому він отримує `SIGTERM` від
   `docker compose stop` і завершується коректно.
 - Контейнер працює від користувача `app` (не root). Писати він може лише в
@@ -1350,8 +1408,10 @@ docker compose exec web python manage.py cancel_unpaid_orders --dry-run
   належать root: `docker compose exec -u root web chown -R app:app /app/media`.
 - `.env` не потрапляє в образ (`.dockerignore`), compose передає змінні через
   `env_file`. Хости в `.env` — `localhost` (для локального запуску);
-  `docker-compose.yml` перевизначає їх для `web`: `POSTGRES_HOST=db`,
-  `REDIS_URL=redis://redis:6379/0` (сервіси бачать один одного за іменем).
+  `docker-compose.yml` перевизначає їх: `POSTGRES_HOST=db`,
+  `REDIS_URL=redis://redis:6379/0`, `CELERY_BROKER_URL=redis://redis:6379/1`
+  (сервіси бачать один одного за іменем), а також `DJANGO_DEBUG=False` і
+  `SENTRY_ENVIRONMENT=docker`.
 - **`$` у значеннях `.env`.** Docker compose сприймає `$abc` як змінну й підставляє
   порожній рядок (`WARN The "abc" variable is not set`). Ключ від
   `get_random_secret_key()` може містити `$`, тому його беремо в **одинарні**
@@ -1435,7 +1495,7 @@ docker compose exec -u root web chown -R app:app /app/media
 - `DJANGO_DEBUG=False`: щоб у дамп не потрапив `debug_toolbar` (змінна з
   командного рядка важливіша за `.env`, `load_dotenv()` її не перезаписує).
 - `--natural-foreign`: зв'язки за природними ключами, а не за `id`: група як
-  `["Editors"]`, permission як `["manage_stock", "books", "book"]`. `id` permissions
+  `["Editors"]`, permission як `["change_stock", "inventory", "stock"]`. `id` permissions
   у PostgreSQL інші, тому інакше не можна.
 - `--natural-primary`: у `User` і `Group` немає `pk`. Групи вже створила
   міграція `users.0003`, `loaddata` знаходить їх за назвою й оновлює, а не дублює.
@@ -1451,7 +1511,7 @@ docker compose exec -u root web chown -R app:app /app/media
 | Змінна | Опис | Приклад |
 |---|---|---|
 | `DJANGO_SECRET_KEY` | секретний ключ (обов'язковий), в одинарних лапках | `'change-me'` |
-| `DJANGO_DEBUG` | режим налагодження; при `False` media не роздаються (і в Docker теж) | `True` |
+| `DJANGO_DEBUG` | режим налагодження для `runserver`; у Docker завжди `False` (compose) | `True` |
 | `DJANGO_ALLOWED_HOSTS` | хости через кому (`localhost` потрібен і для healthcheck) | `127.0.0.1,localhost` |
 | `POSTGRES_DB` | назва бази (обов'язкова); контейнер `db` створює її при першому старті | `bookstore` |
 | `POSTGRES_USER` | користувач бази (обов'язковий) | `bookstore` |
@@ -1459,6 +1519,13 @@ docker compose exec -u root web chown -R app:app /app/media
 | `POSTGRES_HOST` | `localhost` для runserver; у Docker compose ставить `db` | `localhost` |
 | `POSTGRES_PORT` | порт | `5432` |
 | `REDIS_URL` | Redis для кешу й сесій; у Docker compose ставить `redis://redis:6379/0` | `redis://localhost:6379/0` |
+| `CELERY_BROKER_URL` | черга Celery (база 1 того самого Redis); у Docker — `redis://redis:6379/1` | `redis://localhost:6379/1` |
+| `FLOWER_BASIC_AUTH` | логін і пароль Flower `user:password`, без коми; **обов'язкова** для `docker compose` | `'admin:change-me'` |
+| `FLOWER_URL` | адреса Flower для посилання в профілі | `http://localhost:5555` |
+| `SENTRY_DSN` | адреса проєкту Sentry; порожня — Sentry вимкнено | `https://...@o....ingest.sentry.io/...` |
+| `SENTRY_ENVIRONMENT` | середовище в Sentry; у Docker compose ставить `docker` | `local` |
+| `SENTRY_TRACES_SAMPLE_RATE` | частка запитів із таймінгами (Performance) | `0.1` |
+| `SENTRY_ISSUES_URL` | сторінка Issues проєкту для посилання в профілі; порожня — без посилання | |
 | `EMAIL_HOST_USER` | адреса Gmail; порожня → листи в консоль | `name@gmail.com` |
 | `EMAIL_HOST_PASSWORD` | App Password Google (16 літер), не пароль акаунта | |
 | `SITE_URL` | адреса сайту для посилань у листах і `site_url` в API | `http://localhost:8000` |
@@ -1476,6 +1543,172 @@ docker compose exec -u root web chown -R app:app /app/media
   (`LocMemCache` за замовчуванням був би окремим у кожному процесі).
 - **Сесії** (`SESSION_ENGINE = cached_db`): читаються з Redis, записуються і в
   Redis, і в PostgreSQL. Після перезапуску Redis ніхто не вилогінюється.
+- **Черга Celery** — база 1 того самого Redis (`CELERY_BROKER_URL`): `FLUSHDB`
+  кешу (база 0) не зачіпає задачі в черзі.
+
+## Склад
+
+Застосунок `inventory`. Кількість примірників — не поле книги, а окремі таблиці:
+
+```
+Warehouse: name, slug, is_default        # лише один склад за замовчуванням (UniqueConstraint з condition)
+Stock:     book → Book (CASCADE), warehouse → Warehouse (PROTECT), quantity ≥ 0
+           unique (book, warehouse)
+```
+
+- **Навіщо.** Книга — це лише опис (назва, автор, ціна, обкладинка). Кожна
+  покупка змінює `Stock`, а `Book` лишається незмінною, тому кеш книги не
+  застаріває від продажів (див. «Кешування»).
+- Продаж і повернення — зі складу за замовчуванням «General»
+  (`Warehouse.objects.get_default()`).
+- `Book.objects.with_stock()` — анотація `stock` одним підзапитом для всього
+  списку; без неї `book.stock` робить один запит і запам'ятовує результат.
+- `create_order()` блокує рядки `Stock` (`select_for_update`, у порядку `book_id`,
+  щоб два замовлення не чекали одне на одного) і списує кількість;
+  `cancel_order()` повертає її через `return_to_stock()` (`F("quantity") + n` у SQL).
+- Нова книга одразу отримує рядок `Stock` з 0 (сигнал `post_save`).
+- Права: `inventory.change_stock` — група Managers; Editors лише переглядають.
+- Міграції перенесли дані: `inventory 0002` копіює `Book.stock` у `Stock`,
+  `inventory 0003` переносить право `books.manage_stock` → `inventory.change_stock`,
+  `books 0009` видаляє поле. Усі три мають зворотну операцію.
+
+## Кешування
+
+Усе в Redis (база 0). Те, що залежить від користувача або змінюється з
+кожною покупкою, **не кешується**.
+
+| Що | Ключ | Скільки живе | Де |
+|---|---|---|---|
+| Об'єкт книги з автором і категоріями (без залишку) | `books:book:<pk>` | 1 година (`BOOK_CACHE_TIMEOUT`) | `books/cache.py`, `BookDetailView` |
+| Фрагменти шаблонів: картка в каталозі, шапка й опис книги | `book_card` / `book_detail_header` / `book_detail_body` + `pk` + мова | 1 година | `{% cache %}` у `book_list.html`, `book_detail.html` |
+| `GET /api/authors/`, `/api/categories/` | `api:<покоління>:...` | 10 хвилин (`API_CACHE_TIMEOUT`) | `api/cache.py` |
+
+- **Не в кеші:** залишок і бейдж наявності, CSRF-токен, кнопки «в кошик» і
+  кнопки менеджера. Закешований CSRF-токен одного відвідувача дав би іншим 403,
+  а кнопки менеджера побачив би покупець.
+- **`/api/books/` не кешується:** у відповіді є `stock`, він змінюється з кожною покупкою.
+- **Очищення — сигнали** (`books/signals.py`): `post_save` / `post_delete` книги,
+  автора (усі його книги), категорії (усі її книги), `BookCategory` і `m2m_changed`.
+  Ключі видаляються одразу і ще раз після `COMMIT`: інакше паралельний запит
+  міг би встигнути покласти в кеш старі дані з бази.
+- **API — «покоління»:** ключі `cache_page` залежать від URL і параметрів
+  (`?page=2`, `?search=`), перелічити їх усі неможливо. Тому в кожному ключі є
+  номер покоління, і будь-яка зміна каталогу робить `incr` — старі ключі
+  більше не читаються й зникають самі через 10 хвилин. Без `FLUSHDB`: сесії
+  в тій самій базі Redis лишаються.
+- **Логи:** `DEBUG Book cache hit: id=7`, `DEBUG Book cache miss: id=7, cached for 3600 s`,
+  `INFO Book cache cleared: ids=[7] (7 keys), reason: Book saved` (1 об'єкт +
+  3 фрагменти × 2 мови), `INFO API cache: new generation, old answers are not used (...)`.
+
+## Celery
+
+```
+web / admin ── enqueue_on_commit(task, pk) ──► Redis db 1 ──► celery (worker) ──► SMTP / база
+celery-beat ── за розкладом ─────────────────┘
+```
+
+**Задачі:**
+
+| Задача | Хто ставить | Що робить |
+|---|---|---|
+| `send_order_created_email_task` | `create_order()` | лист «замовлення створено» |
+| `send_payment_received_email_task` | оплата (webhook, менеджер) | лист «оплату отримано» |
+| `send_order_cancelled_email_task` | автоматичне скасування | лист «замовлення скасовано» (покупцю, який сам натиснув «Скасувати», не надсилається) |
+| `cancel_unpaid_orders` | Beat, щогодини о :00 | `new` + `unpaid` старші за `ORDER_UNPAID_MAX_AGE_HOURS` (24) → скасування, книги на склад |
+| `clear_expired_sessions` | Beat, 03:00 UTC | `manage.py clearsessions` |
+| `send_daily_report` | Beat, 06:00 UTC | звіт за вчора менеджерам (група Managers) |
+
+- **Після `COMMIT`.** `enqueue_on_commit()` (`config/celery.py`) ставить задачу
+  лише після успішної транзакції: воркер не прочитає замовлення, якого ще немає
+  в базі. Якщо Redis недоступний, задача виконується одразу в цьому ж процесі
+  (лист не губиться).
+- **Повторні спроби листів:** при `OSError` (SMTP недоступний) — ще 3 спроби,
+  паузи до 60, 120, 240 с (`retry_backoff`; `retry_jitter` бере випадкову
+  частину, щоб сотня листів не повторювалась в ту саму секунду). Після
+  останньої — помилка в лозі й у Sentry.
+- **Надійність:** `acks_late` (повідомлення видаляється з черги після виконання:
+  перезапуск воркера задачу не губить), `prefetch 1`, ліміт часу 5 / 6 хвилин.
+- **Звіт** (`orders/reports.py`): 3 CSV у вкладенні (UTF-8 з BOM, відкриваються
+  в Excel): замовлення дня, топ книг, книги з залишком ≤ 5. Менеджери в `bcc`,
+  кожному — його мовою.
+- Розклад — у `CELERY_BEAT_SCHEDULE` (`settings.py`), а не в адмінці
+  (django-celery-beat): його видно й рев'юють у git. Час — UTC.
+- Ручний запуск задачі:
+  `docker compose exec web python manage.py shell -c "from orders.tasks import send_daily_report; send_daily_report.delay()"`.
+
+### Flower
+
+http://localhost:5555/ — панель Celery: воркери, кожна задача з аргументами,
+станом, часом виконання, помилкою й повторними спробами, графіки.
+
+- Воркер надсилає події кожного кроку задачі (`CELERY_WORKER_SEND_TASK_EVENTS`,
+  `CELERY_TASK_SEND_SENT_EVENT`), Flower читає їх з Redis.
+- Логін обов'язковий (`FLOWER_BASIC_AUTH`; без нього `docker compose` не
+  стартує): з Flower можна зупиняти задачі й воркерів. Порт відкрито лише на
+  `127.0.0.1`, не для інших пристроїв у мережі.
+- Історія — в пам'яті Flower: після перезапуску видно задачі з цього моменту.
+
+## nginx
+
+`nginx/default.conf`, образ `nginx:1.30-alpine`, порт 8000 на Mac.
+
+```
+браузер → localhost:8000 → nginx :80 ─┬─ /static/ → volume static_data       (Cache-Control: рік, immutable)
+                                       ├─ /media/  → volume media_data        (expires 7d, nosniff)
+                                       └─ решта    → web:8000 (gunicorn)
+```
+
+- **Навіщо:** файли з диска nginx віддає набагато швидше за Python, а
+  повільних клієнтів тримає на себе — воркери gunicorn не чекають на них.
+- `client_max_body_size 3m`: за замовчуванням 1 МБ, і обкладинка на 2 МБ
+  отримала б від nginx 413 ще до перевірки у формі. Ще `gzip` для HTML, CSS, JS, JSON.
+- `proxy_set_header Host $http_host` — з портом (`localhost:8000`): Django
+  звіряє його з `Origin` у POST, без порту перевірка CSRF давала б 403.
+- **Справжня IP-адреса клієнта.** nginx **записує** (а не дописує) `X-Forwarded-For
+  $remote_addr`, gunicorn запущено з `--forwarded-allow-ips=*` (запити приходять
+  лише від nginx), і uvicorn кладе адресу в `REMOTE_ADDR`. Тому логи входу
+  й ліміти API бачать клієнта, а не nginx, без змін у коді.
+- DRF `NUM_PROXIES: 0`: ліміт анонімних запитів рахується за `REMOTE_ADDR`, а не
+  за `X-Forwarded-For` з запиту — інакше клієнт обходив би ліміт вигаданою адресою.
+- **`DEBUG=False` у Docker:** немає сторінок з traceback і Debug Toolbar.
+  Помилки показують `404.html`, `403.html`, `500.html`; `500.html` не наслідує
+  `base.html` — він рендериться без контексту запиту й не повинен сам упасти.
+- WhiteNoise прибрано: статику роздає nginx, `runserver` — сам.
+
+## Sentry
+
+`config/sentry.py`, викликається в кінці `settings.py`, тож працює в `web`,
+`celery` і `celery-beat`. Без `SENTRY_DSN` (і в тестах) не запускається.
+
+**Що потрапляє в Sentry:**
+
+- виняток у view (користувач бачить `500.html`) — з URL, методом, заголовками;
+- виняток у задачі Celery після **останньої** повторної спроби;
+- `logger.error()` / `logger.exception()`; рядки INFO і WARNING — як «breadcrumbs»
+  (кроки перед помилкою);
+- таймінги 10% запитів і задач (`SENTRY_TRACES_SAMPLE_RATE`), задача — разом із
+  запитом, що її поставив. `/health/` не вимірюється: Docker смикає його кожні
+  10 секунд, це з'їдало б квоту.
+
+**Що не потрапляє** (`data_collection` — заміна `send_default_pii`, застарілого в 2.74):
+
+- cookies взагалі (`sessionid` дав би змогу увійти від імені користувача);
+- дані користувача (id, email, IP) і заголовки з IP; `Authorization` (JWT) SDK замінює на `[Filtered]`;
+- тіла запитів (у формі оформлення — ім'я, телефон, адреса), значення параметрів SQL;
+- рядки логів входу та видачі токена (в них IP);
+- `Invalid HTTP_HOST header` від ботів.
+
+**Перевірка:** суперкористувач відкриває `/sentry-debug/` — це навмисний
+`ZeroDivisionError` (для інших 404). Чи ввімкнено Sentry у контейнері:
+
+```bash
+docker compose exec web python -c "import django,os;os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings');django.setup();import sentry_sdk as s;c=s.get_client();print(c.is_active(),c.options['environment'],bool(c.dsn))"
+# True docker True
+```
+
+`tests/unit/test_sentry.py` шле запит через справжній `config.asgi.application`
+(звичайний тестовий `Client` обходить місце, де SDK збирає дані запиту) і
+перевіряє, що ні `sessionid`, ні IP, ні email у подію не потрапили.
 
 ## `/health/`
 
@@ -1523,7 +1756,9 @@ python manage.py cancel_unpaid_orders --dry-run          # лише показа
   якщо оплата прийшла між вибіркою й скасуванням, замовлення пропускається («skipped»).
 - Мінімум `--older-than 30m`: сторінка Stripe живе 31 хвилину, молодше замовлення
   може саме зараз оплачуватися.
-- Поки запускається вручну; за розкладом (Celery beat) — у наступних ДЗ.
+- Щогодини запускається задачею Celery Beat (`orders.tasks.cancel_unpaid_orders`);
+  кожному покупцю — лист «замовлення скасовано». Кожен запуск, навіть без
+  скасувань, пише в лог `Unpaid orders older than 1 day, 0:00:00: cancelled 0, skipped 0`.
 
 ### `book_stats`
 
@@ -1595,12 +1830,13 @@ ORDER BY:  андрій, Андрій, Борис, Гліб, Ґанна, Євг�
 - **Старі файли обкладинок не видаляються.** Django не прибирає файл з
   диска, коли книгу видалено, обкладинку замінено або позначено «Remove».
   Такі файли лишаються в `media/` (у Docker — у volume `media_data`).
-- **Docker працює з `DJANGO_DEBUG=True`.** Інакше Django не роздає обкладинки,
-  а WhiteNoise вміє лише статику. Для продакшну потрібен nginx (окрема задача):
-  він роздаватиме `/media/` і `/static/` з volumes, а Django перейде на `DEBUG=False`.
-- **IP у логах — це `REMOTE_ADDR`.** У Docker це адреса шлюзу (`192.168.65.1`),
-  за проксі (nginx) буде адреса проксі; справжню треба брати з `X-Forwarded-For`,
-  налаштувавши довіру до проксі.
+- **IP у логах — це адреса Mac з погляду Docker** (`192.168.65.1`): nginx
+  передає справжню адресу клієнта, але на локальній машині клієнт — сам Docker Desktop.
+- **Лише HTTP.** HTTPS (сертифікат, `SECURE_PROXY_SSL_HEADER`, HSTS) потрібен на
+  справжньому сервері; nginx уже передає `X-Forwarded-Proto`.
+- **Історія Flower і розклад Beat не зберігаються** між перестворенням контейнерів:
+  Flower тримає задачі в пам'яті, Beat — час останніх запусків у `/tmp`
+  (пропущений запуск не повторюється, просто чекає наступного).
 - **`logs/app.log` у контейнері не зберігається** між перестворенням контейнера
   (немає volume); у Docker логи дивимось через `docker compose logs`.
 - **Вихід у лозі middleware показується як `user=anonymous`**: `logout()`
@@ -1613,8 +1849,8 @@ ORDER BY:  андрій, Андрій, Борис, Гліб, Ґанна, Євг�
 - **Stripe лише в тестовому режимі.** Акаунт не активовано (Україна не підтримується).
 - **Повернення коштів вручну.** Якщо скасовано оплачене замовлення, адмінка лише
   попереджає «return the money to the customer»; refund через Stripe API немає.
-- **Листи й скасування неоплачених — синхронно й вручну.** Лист відправляється в
-  межах запиту; `cancel_unpaid_orders` запускається руками. Обидва — задачі для Celery.
+- **Скасування менеджером в адмінці — без листа покупцю.** Лист «замовлення
+  скасовано» йде лише при автоматичному скасуванні.
 - **Дані не перекладаються.** Інтерфейс двомовний, але назви й описи книг,
   імена авторів і категорії зберігаються однією мовою (так, як їх внесли).
 - **Сторінка Stripe не українською.** Stripe Checkout не має української:
@@ -1630,12 +1866,12 @@ ORDER BY:  андрій, Андрій, Борис, Гліб, Ґанна, Євг�
 
 ## Плани
 
-- nginx перед gunicorn: роздача static і media, `DEBUG=False` у Docker;
+- обмеження частоти запитів у nginx (`limit_req`) для сторінок сайту, HTTPS;
 - переклад даних: назви й описи книг, автори, категорії українською та англійською
   (django-modeltranslation або django-parler);
 - валюти: модель `Currency` (UAH, USD);
 - скидання пароля й підтвердження email;
-- Celery: листи у фоні, `cancel_unpaid_orders` за розкладом (beat);
+- лист покупцю, коли замовлення скасовує менеджер в адмінці;
 - відкликання JWT: `token_blacklist` simplejwt — вихід з API (`POST /api/token/logout/`
   кладе refresh у чорний список), `ROTATE_REFRESH_TOKENS` + `BLACKLIST_AFTER_ROTATION`,
   недійсні токени після зміни пароля; потрібна міграція;

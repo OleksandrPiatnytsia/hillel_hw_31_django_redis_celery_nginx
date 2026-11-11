@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Bookstore\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-11 19:08+0000\n"
+"POT-Creation-Date: 2026-11-11 21:00+0000\n"
 "PO-Revision-Date: 2026-11-10 16:00+0200\n"
 "Last-Translator: Bookstore\n"
 "Language-Team: Ukrainian\n"
@@ -39,7 +39,8 @@ msgstr "Змінювати можуть лише користувачі з пр�
 
 #: api/serializers/orders.py:175
 msgid "Every book may be in the list only once; use quantity."
-msgstr "Кожна книга може бути в списку лише один раз; використовуйте quantity."
+msgstr ""
+"Кожна книга може бути в списку лише один раз; використовуйте quantity."
 
 #: api/views/catalog.py:116
 msgid "The book is in orders and can't be deleted."
@@ -342,7 +343,8 @@ msgstr "Ви точно хочете видалити цю книгу?"
 
 #: books/templates/books/book_confirm_delete.html:27
 msgid "Its category links will be removed too. Categories themselves stay."
-msgstr "Її зв'язки з категоріями теж буде видалено. Самі категорії залишаться."
+msgstr ""
+"Її зв'язки з категоріями теж буде видалено. Самі категорії залишаться."
 
 #: books/templates/books/book_confirm_delete.html:37
 #: books/templates/books/book_detail.html:89
@@ -400,7 +402,7 @@ msgid "Added %(added)s · updated %(updated)s"
 msgstr "Додано %(added)s · оновлено %(updated)s"
 
 #: books/templates/books/book_detail.html:85 templates/403.html:27
-#: templates/404.html:20
+#: templates/404.html:20 templates/500.html:27
 msgid "Back to catalog"
 msgstr "До каталогу"
 
@@ -639,11 +641,11 @@ msgstr "«%(title)s» прибрано з кошика."
 msgid "The cart is empty now."
 msgstr "Кошик тепер порожній."
 
-#: config/settings.py:335
+#: config/settings.py:345
 msgid "Ukrainian"
 msgstr "Українська"
 
-#: config/settings.py:336
+#: config/settings.py:346
 msgid "English"
 msgstr "Англійська"
 
@@ -731,7 +733,7 @@ msgstr "%(order)s має оплати: поверніть гроші покуп�
 msgid "Cancel selected orders (books go back to stock)"
 msgstr "Скасувати вибрані замовлення (книги повертаються на склад)"
 
-#: orders/apps.py:8
+#: orders/apps.py:8 users/tools.py:38
 msgid "Orders"
 msgstr "Замовлення"
 
@@ -771,7 +773,7 @@ msgstr "пропущено: %(error)s"
 msgid "cancelled: order #%(number)s"
 msgstr "скасовано: замовлення #%(number)s"
 
-#: orders/management/commands/cancel_unpaid_orders.py:115
+#: orders/management/commands/cancel_unpaid_orders.py:120
 #, python-format
 msgid "Cancelled: %(cancelled)s, skipped: %(skipped)s."
 msgstr "Скасовано: %(cancelled)s, пропущено: %(skipped)s."
@@ -931,8 +933,8 @@ msgstr "Ваше замовлення"
 
 #: orders/templates/orders/checkout.html:99
 msgid ""
-"The books are reserved when you place the order. Then you pay with the “Pay” "
-"button on the order page."
+"The books are reserved when you place the order. Then you pay with the “Pay”"
+" button on the order page."
 msgstr ""
 "Книги резервуються, щойно ви оформите замовлення. Потім ви оплачуєте його "
 "кнопкою «Оплатити» на сторінці замовлення."
@@ -1031,8 +1033,8 @@ msgid ""
 "<strong>%(order)s</strong> was not paid in time, so we cancelled it and "
 "returned the reserved books to the store."
 msgstr ""
-"<strong>%(order)s</strong> не було оплачено вчасно, тому ми його скасували, а"
-" зарезервовані книги повернули в магазин."
+"<strong>%(order)s</strong> не було оплачено вчасно, тому ми його скасували, "
+"а зарезервовані книги повернули в магазин."
 
 #: orders/templates/orders/emails/order_cancelled.html:28
 #: orders/templates/orders/emails/order_created.html:32
@@ -1054,8 +1056,8 @@ msgstr "Відкрити замовлення"
 #: orders/templates/orders/emails/order_cancelled.txt:4
 #, python-format
 msgid ""
-"%(order)s was not paid in time, so we cancelled it and returned the reserved "
-"books to the store."
+"%(order)s was not paid in time, so we cancelled it and returned the reserved"
+" books to the store."
 msgstr ""
 "%(order)s не було оплачено вчасно, тому ми його скасували, а зарезервовані "
 "книги повернули в магазин."
@@ -1122,7 +1124,8 @@ msgstr "Книгарня: %(order)s створено (%(total)s грн)"
 
 #: orders/templates/orders/order_detail.html:9
 #: orders/templates/orders/order_list.html:4
-#: orders/templates/orders/order_list.html:7 templates/includes/navbar.html:106
+#: orders/templates/orders/order_list.html:7
+#: templates/includes/navbar.html:106
 msgid "My orders"
 msgstr "Мої замовлення"
 
@@ -1218,7 +1221,7 @@ msgstr "ручна оплата"
 msgid "add a manual payment (money received outside the site)"
 msgstr "додати ручну оплату (гроші отримано поза сайтом)"
 
-#: payments/apps.py:8
+#: payments/apps.py:8 users/tools.py:61
 msgid "Payments"
 msgstr "Оплати"
 
@@ -1352,8 +1355,8 @@ msgid ""
 "The order is <strong>fully paid</strong>. We'll let you know when it's "
 "shipped."
 msgstr ""
-"Замовлення <strong>повністю оплачено</strong>. Ми повідомимо, коли його буде "
-"відправлено."
+"Замовлення <strong>повністю оплачено</strong>. Ми повідомимо, коли його буде"
+" відправлено."
 
 #: payments/templates/payments/emails/payment_received.html:46
 #, python-format
@@ -1437,7 +1440,8 @@ msgid "Open %(order)s"
 msgstr "Відкрити: %(order)s"
 
 #: payments/views.py:58
-msgid "The payment was not completed. You can pay later with the “Pay” button."
+msgid ""
+"The payment was not completed. You can pay later with the “Pay” button."
 msgstr "Оплату не завершено. Оплатити можна пізніше кнопкою «Оплатити»."
 
 #: templates/403.html:10 templates/403.html:15
@@ -1463,6 +1467,18 @@ msgstr "Сторінку не знайдено"
 msgid "The page doesn't exist or isn't available to you."
 msgstr "Сторінки не існує або вона вам недоступна."
 
+#: templates/500.html:18
+msgid "Server error"
+msgstr "Помилка сервера"
+
+#: templates/500.html:22
+msgid "Something went wrong on our side"
+msgstr "Щось пішло не так на нашому боці"
+
+#: templates/500.html:24
+msgid "We already know about it. Please try again in a few minutes."
+msgstr "Ми вже знаємо про це. Спробуйте ще раз за кілька хвилин."
+
 #: templates/base.html:30
 msgid "Bookstore · Hillel Django homework"
 msgstr "Книгарня · домашнє завдання Hillel з Django"
@@ -1475,7 +1491,7 @@ msgstr "Закрити"
 msgid "Toggle navigation"
 msgstr "Показати або сховати меню"
 
-#: templates/includes/navbar.html:38
+#: templates/includes/navbar.html:38 users/tools.py:37
 msgid "Admin"
 msgstr "Адмінка"
 
@@ -1498,12 +1514,12 @@ msgid "Log out"
 msgstr "Вийти"
 
 #: templates/includes/navbar.html:122 users/templates/users/auth_form.html:54
-#: users/views.py:40
+#: users/views.py:41
 msgid "Log in"
 msgstr "Увійти"
 
 #: templates/includes/navbar.html:126 users/templates/users/auth_form.html:52
-#: users/views.py:72
+#: users/views.py:73
 msgid "Sign up"
 msgstr "Зареєструватися"
 
@@ -1584,7 +1600,8 @@ msgstr "звичайний користувач"
 msgid "Groups"
 msgstr "Групи"
 
-#: users/templates/users/profile.html:36 users/templates/users/profile.html:81
+#: users/templates/users/profile.html:36
+#: users/templates/users/profile.html:103
 msgid "none"
 msgstr "немає"
 
@@ -1620,7 +1637,11 @@ msgstr "змінювати залишки"
 msgid "delete books"
 msgstr "видаляти книги"
 
-#: users/templates/users/profile.html:76
+#: users/templates/users/profile.html:77
+msgid "Tools"
+msgstr "Інструменти"
+
+#: users/templates/users/profile.html:98
 #, python-format
 msgid "All permissions (%(count)s)"
 msgstr "Усі права (%(count)s)"
@@ -1637,24 +1658,100 @@ msgstr "Підставляються автоматично під час офо
 msgid "Save"
 msgstr "Зберегти"
 
-#: users/views.py:39
+#: users/tools.py:37
+msgid "Books, authors, users, groups"
+msgstr "Книги, автори, користувачі, групи"
+
+#: users/tools.py:38
+msgid "Statuses, cancellation, payments"
+msgstr "Статуси, скасування, платежі"
+
+#: users/tools.py:39
+msgid "Stock"
+msgstr "Залишки"
+
+#: users/tools.py:39
+msgid "Copies of every book in the warehouse"
+msgstr "Примірники кожної книги на складі"
+
+#: users/tools.py:42
+msgid "Browsable API"
+msgstr "API у браузері"
+
+#: users/tools.py:42
+msgid "The API in the browser, with forms"
+msgstr "API прямо в браузері, з формами"
+
+#: users/tools.py:43
+msgid "API documentation, requests right from the page"
+msgstr "Документація API, запити прямо зі сторінки"
+
+#: users/tools.py:44
+msgid "API documentation for reading"
+msgstr "Документація API для читання"
+
+#: users/tools.py:45
+msgid "OpenAPI schema"
+msgstr "Схема OpenAPI"
+
+#: users/tools.py:45
+msgid "For Postman and client generators"
+msgstr "Для Postman і генераторів клієнтів"
+
+#: users/tools.py:48
+msgid "Health check"
+msgstr "Перевірка стану"
+
+#: users/tools.py:48
+msgid "PostgreSQL and Redis answer (JSON)"
+msgstr "Чи відповідають PostgreSQL і Redis (JSON)"
+
+#: users/tools.py:49
+msgid "Celery tasks and workers, live"
+msgstr "Задачі й воркери Celery наживо"
+
+#: users/tools.py:53
+msgid "Errors of the site and of the tasks"
+msgstr "Помилки сайту й задач"
+
+#: users/tools.py:56
+msgid "Sentry test error"
+msgstr "Тестова помилка Sentry"
+
+#: users/tools.py:56
+msgid "Raises an error on purpose: check that Sentry gets it"
+msgstr "Навмисна помилка: перевірити, що Sentry її отримує"
+
+#: users/tools.py:58
+msgid "Site"
+msgstr "Сайт"
+
+#: users/tools.py:58
+msgid "Monitoring"
+msgstr "Моніторинг"
+
+#: users/tools.py:61
+msgid "Payments and webhooks"
+msgstr "Платежі й вебхуки"
+
+#: users/views.py:40
 #, python-format
 msgid "Welcome back, %(username)s!"
 msgstr "З поверненням, %(username)s!"
 
-#: users/views.py:62
+#: users/views.py:63
 msgid "You have been logged out."
 msgstr "Ви вийшли з акаунта."
 
-#: users/views.py:71
+#: users/views.py:72
 #, python-format
 msgid "Account created. Welcome, %(username)s!"
 msgstr "Акаунт створено. Вітаємо, %(username)s!"
 
-#: users/views.py:72
+#: users/views.py:73
 msgid "Create account"
 msgstr "Створити акаунт"
 
-#: users/views.py:150
+#: users/views.py:156
 msgid "Your profile is saved."
 msgstr "Профіль збережено."

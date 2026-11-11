@@ -256,6 +256,18 @@ def test_manager_changes_the_stock(as_user, manager):
     assert book.stock == 3
 
 
+# Generated with AI
+def test_manager_creates_a_book_with_its_first_copies(as_user, manager):
+    response = as_user(manager).post(
+        "/api/books/", new_book_data(AuthorFactory(), stock=7), format="json"
+    )
+
+    assert response.status_code == 201
+    assert response.json()["stock"] == 7
+    # Written to the default warehouse (inventory.Stock), not to the book
+    assert Book.objects.get().stocks.get().quantity == 7
+
+
 def test_invalid_book_data_is_400_with_the_errors_of_the_fields(as_user, editor):
     response = as_user(editor).post(
         "/api/books/",

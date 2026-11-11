@@ -186,3 +186,11 @@ def test_book_form_writes_the_stock_the_manager_changed():
 
     book.refresh_from_db()
     assert book.stock == 12
+
+
+# Generated with AI
+def test_a_book_not_saved_yet_has_no_copies(django_assert_num_queries):
+    book = Book(title="Draft")
+
+    with django_assert_num_queries(0):  # no row can exist: no query
+        assert book.stock == 0
